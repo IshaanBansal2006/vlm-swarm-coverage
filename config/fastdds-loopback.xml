@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- drone-swarm-autonomy: Fast DDS profile for the Isaac (Windows) <-> WSL boundary.
+
+     Mirrored networking gives BOTH OSes the same IP, so default Fast DDS
+     (a) treats the other side as same-host and tries shared-memory transport,
+     which cannot cross the OS boundary, and (b) announces own-IP locators that
+     route back to the sender. Raw UDP over 127.0.0.1 crosses the boundary in
+     both directions (verified 2026-07-29), so this profile forces:
+       - UDP transport ONLY (no SHM)             -> data can actually cross
+       - loopback interface whitelist            -> locators say 127.0.0.1
+       - initial peers at 127.0.0.1              -> plain RTPS peer discovery,
+         no discovery server, no multicast       -> humble<->jazzy compatible
+
+     Use the SAME file on both sides:
+       WSL:     FASTRTPS_DEFAULT_PROFILES_FILE=<repo>/config/fastdds-loopback.xml
+       Windows: copy to C:\IsaacSim\fastdds-loopback.xml; run_scene.bat sets
+                FASTRTPS_DEFAULT_PROFILES_FILE + FASTDDS_DEFAULT_PROFILES_FILE
+                (Fast DDS 3.x renamed the variable; set both). -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>UdpLoopbackOnly</transport_id>
+            <type>UDPv4</type>
+            <interfaceWhiteList>
+                <address>127.0.0.1</address>
+            </interfaceWhiteList>
+        </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="wsl_windows_loopback" is_default_profile="true">
+        <rtps>
+            <useBuiltinTransports>false</useBuiltinTransports>
+            <userTransports>
+                <transport_id>UdpLoopbackOnly</transport_id>
+            </userTransports>
+            <builtin>
+                <!-- Port-less peers only probe participant ids 0-4; a busy
+                     graph (many nodes) pushes participants past that and they
+                     become undiscoverable (observed live: gate at index >4
+                     matched 0 subscribers). Explicit metatraffic ports
+                     7410 + 2*id cover ids 0-19. -->
+                <initialPeersList>
+                    <locator><udpv4><address>127.0.0.1</address></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7410</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7412</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7414</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7416</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7418</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7420</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7422</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7424</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7426</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7428</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7430</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7432</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7434</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7436</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7438</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7440</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7442</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7444</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7446</port></udpv4></locator>
+                    <locator><udpv4><address>127.0.0.1</address><port>7448</port></udpv4></locator>
+                </initialPeersList>
+            </builtin>
+        </rtps>
+    </participant>
+</profiles>
