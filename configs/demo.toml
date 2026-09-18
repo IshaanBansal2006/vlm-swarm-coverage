@@ -1,0 +1,36 @@
+# The demo run: three drones, the fixed storm-damage corridor, oracle scoring, a perfect channel.
+# Every field here is validated by src/vlm_swarm_coverage/config.py; unknown keys are an error.
+
+name = "demo"
+
+[area]
+width = 60.0
+height = 40.0
+cell_size = 2.0
+
+[swarm]
+n_drones = 3
+altitude = 12.0
+max_speed = 3.0
+camera_fov_deg = 70.0
+
+[sim]
+dt = 0.1
+duration_s = 120.0
+seed = 0
+
+[channel]
+drop_rate = 0.0
+latency_s = 0.0
+sync_interval_s = 1.0
+
+[scorer]
+kind = "oracle"
+period_s = 1.0
+
+[controller]
+kind = "lloyd"
+gain = 1.0
+
+[scene]
+kind = "default"
