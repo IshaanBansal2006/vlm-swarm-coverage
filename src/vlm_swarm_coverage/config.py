@@ -43,6 +43,7 @@ class SwarmConfig(_Strict):
     altitude: float = Field(12.0, gt=0)
     max_speed: float = Field(3.0, gt=0, description="Speed limit per drone, m/s.")
     camera_fov_deg: float = Field(70.0, gt=0, lt=180, description="Full horizontal field of view.")
+    camera_aspect: float = Field(4 / 3, gt=0, description="Image width / height.")
 
 
 class SimConfig(_Strict):

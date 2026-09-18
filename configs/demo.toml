@@ -13,6 +13,7 @@ n_drones = 3
 altitude = 12.0
 max_speed = 3.0
 camera_fov_deg = 70.0
+camera_aspect = 1.3333
 
 [sim]
 dt = 0.1
