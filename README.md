@@ -43,7 +43,7 @@ The near-term milestones are the first live rendered run and the model behind th
 | `sim/` | The Isaac Sim scene (`scenes/coverage_scene.py`) and the Windows-side launcher |
 | `config/` | DDS transport profile for the simulator ↔ WSL boundary |
 | `scripts/` | `demo.sh` (run + render), environment setup, a bridge verification check, the Isaac-capture footage builder |
-| `configs/` | Run configurations (`demo.toml` is the reference run) |
+| `configs/` | Run configurations: `demo.toml` (three drones, the rendered walkthrough) and `study.toml` (five drones, the baseline sweeps derive from) |
 | `src/vlm_swarm_coverage/` | The rig |
 | `docs/decisions/` | Decision records — context, options, choice, consequences |
 

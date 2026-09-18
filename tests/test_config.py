@@ -19,6 +19,11 @@ def test_demo_config_loads_and_round_trips(tmp_path: Path) -> None:
     assert RunConfig.load(out) == cfg
 
 
+def test_study_config_loads_with_five_drones() -> None:
+    cfg = RunConfig.load(REPO / "configs" / "study.toml")
+    assert cfg.name == "study" and cfg.swarm.n_drones == 5
+
+
 def test_unknown_key_is_an_error(tmp_path: Path) -> None:
     p = tmp_path / "bad.toml"
     p.write_text('name = "x"\n[swarm]\nn_drone = 2\n')
