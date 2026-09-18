@@ -15,12 +15,11 @@ multi-agent systems. This repository is the apparatus for working in that gap.
 
 ## Status
 
-**Early — infrastructure.** The simulator bridge and project scaffolding are in place. No
-experiments have run yet.
+**Early — infrastructure.** The simulator bridge, project scaffolding, the world description, the
+run configuration, and the run-artifact layout are in place. No experiments have run yet.
 
-The near-term milestone is the pipeline coming online end to end on a single drone: rendered camera
-frames out of the simulator, a model scoring them, and a coverage controller closing the loop on
-the result.
+The near-term milestone is the pipeline coming online end to end: a shared importance field, a
+scorer feeding it, a coverage controller consuming it, and the simulator rendering the result.
 
 ---
 
@@ -31,8 +30,17 @@ the result.
 | `sim/` | Isaac Sim scenes and the Windows-side launcher |
 | `config/` | DDS transport profile for the simulator ↔ WSL boundary |
 | `scripts/` | Environment setup and a bridge verification check |
+| `configs/` | Run configurations (`demo.toml` is the reference run) |
 | `src/vlm_swarm_coverage/` | The rig |
 | `docs/decisions/` | Decision records — context, options, choice, consequences |
+
+Inside the rig so far:
+
+| Module | Role |
+|---|---|
+| `scene.py` | The world: survey area, road, mission, features with labels and footprints, drone start poses. Pure dataclasses so the simulator's Python can import it by path. Fixed demo layout plus a seeded generator for sweeps. |
+| `config.py` | One typed, validated `RunConfig` that fully determines a run. TOML in, JSON snapshot out. Unknown keys are errors. |
+| `artifacts.py` | A directory per run: config snapshot, provenance (package version, git sha), and an append-only JSONL event log that every metric is computed from offline. |
 
 Design notes and experimental records are kept privately while the work is in progress. What is
 here is the engineering: the simulator integration, the transport configuration, and the structure
