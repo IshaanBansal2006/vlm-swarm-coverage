@@ -16,10 +16,19 @@ multi-agent systems. This repository is the apparatus for working in that gap.
 ## Status
 
 **Early — infrastructure.** The simulator bridge, project scaffolding, the world description, the
-run configuration, the run-artifact layout, the importance grid, the message schema, and the scorer interface with an oracle are in place. No experiments have run yet.
+run configuration, the run-artifact layout, the importance grid, the message schema, the scorer interface with an oracle, the kinematic world,
+the Lloyd controller, and the loop that closes them are in place. The demo config runs end to end
+without a simulator or a model:
 
-The near-term milestone is the pipeline coming online end to end: a shared importance field, a
-scorer feeding it, a coverage controller consuming it, and the simulator rendering the result.
+```bash
+vsc-run configs/demo.toml --out runs
+```
+
+No fusion rule exists yet: each drone's belief is only what it has seen. No faulted channel exists
+yet, and nothing has been rendered. No experiments have run yet.
+
+The near-term milestones are a faulted channel, the simulator rendering a run, and the model
+behind the scorer interface.
 
 ---
 
@@ -45,6 +54,11 @@ Inside the rig so far:
 | `schemas.py` | Typed inter-drone messages (pose, belief) with a fixed binary wire format, so every message knows its own byte size. Decision 030. |
 | `consensus.py` | The belief-fusion interface. Only the no-fusion endpoint exists so far. |
 | `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache. Decisions 010–012. |
+| `world.py` | First-order drone kinematics at fixed altitude. Decision 021. |
+| `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized. Decision 020. |
+| `channel.py` | The channel interface and a perfect channel. |
+| `simulation.py` | The loop: observe, score, share, fuse, control, step, log. Assembled from config. |
+| `__main__.py` | `vsc-run configs/demo.toml --out runs` |
 
 Design notes and experimental records are kept privately while the work is in progress. What is
 here is the engineering: the simulator integration, the transport configuration, and the structure

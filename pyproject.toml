@@ -38,6 +38,9 @@ dev = [
     "ipython",
 ]
 
+[project.scripts]
+vsc-run = "vlm_swarm_coverage.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
