@@ -69,6 +69,7 @@ class Simulation:
     controller: CoverageController
     channel: Channel
     agents: list[Agent]
+    on_step: Callable[[Simulation, float], None] | None = None
 
     def run(self, run_dir: RunDir) -> RunDir:
         cfg = self.config
@@ -85,6 +86,8 @@ class Simulation:
                 self._receive(t, ev)
                 self.world.step(self._commands())
                 self._log_poses(t, ev)
+                if self.on_step is not None:
+                    self.on_step(self, self.world.t)
             ev.write("end", self.world.t, steps=cfg.sim.n_steps, channel=dict(getattr(self.channel, "stats", {})))
         log.info("run complete: %s (%d steps)", run_dir.path, cfg.sim.n_steps)
         return run_dir
@@ -172,10 +175,13 @@ def build(
     fusion: BeliefFusion | None = None,
     channel: Channel | None = None,
     scorer_wrap: Callable[[ImportanceScorer], ImportanceScorer] | None = None,
+    scorer: ImportanceScorer | None = None,
+    on_step: Callable[[Simulation, float], None] | None = None,
 ) -> Simulation:
     """Assemble a simulation from config. Fusion is injectable because the rule is the author's;
     the channel so tests can substitute one; `scorer_wrap` so an outer layer can wrap the scorer
-    (for example to perturb its output) without this module knowing how."""
+    without this module knowing how; `scorer` replaces the configured
+    scorer outright (a remote one, say); `on_step` runs after every world step (a renderer bridge)."""
     scene = build_scene(cfg)
     if (scene.width, scene.height) != (cfg.area.width, cfg.area.height):
         raise ValueError(
@@ -186,7 +192,7 @@ def build(
     ground_truth = rasterize_ground_truth(scene, grid)
     world = KinematicWorld(scene.drone_starts, scene.width, scene.height, cfg.swarm.max_speed, cfg.sim.dt)
     agents = [Agent(i, ImportanceField.uniform(grid, scene.mission.floor)) for i in range(cfg.swarm.n_drones)]
-    scorer = build_scorer(cfg, grid, ground_truth)
+    scorer = scorer or build_scorer(cfg, grid, ground_truth)
     if scorer_wrap is not None:
         scorer = scorer_wrap(scorer)
     return Simulation(
@@ -196,6 +202,7 @@ def build(
         controller=build_controller(cfg),
         channel=channel or build_channel(cfg),
         agents=agents,
+        on_step=on_step,
     )
 
 

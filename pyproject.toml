@@ -3,7 +3,7 @@ name = "vlm-swarm-coverage"
 version = "0.0.0"
 description = "Simulation rig for decentralized multi-drone coverage driven by a vision-language model."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [{ name = "Ishaan Bansal" }]
 license = { text = "MIT" }
 
@@ -14,6 +14,7 @@ license = { text = "MIT" }
 dependencies = [
     "numpy>=1.26",
     "pydantic>=2.0",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -50,7 +51,7 @@ packages = ["src/vlm_swarm_coverage"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH"]
@@ -59,7 +60,7 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH"]
 ignore = ["E501", "N803", "N806"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 warn_unused_configs = true
 
 [tool.pytest.ini_options]

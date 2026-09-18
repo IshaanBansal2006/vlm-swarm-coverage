@@ -19,6 +19,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from vlm_swarm_coverage.field import ImportanceField
+from vlm_swarm_coverage.scoring import Observation
 
 if TYPE_CHECKING:
     from vlm_swarm_coverage.field import Grid
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
 WIRE_DTYPE = np.dtype("<f4")
 POSE_HEADER = struct.Struct("<IId4d")
 BELIEF_HEADER = struct.Struct("<IIdII")
+OBS_HEADER = struct.Struct("<IIdI")
+CELL_DTYPE = np.dtype("<i2")
 
 
 class _Wire(BaseModel):
@@ -113,3 +116,52 @@ class BeliefMessage(_Wire):
             )
         values = np.frombuffer(buf[size:], dtype=WIRE_DTYPE).astype(np.float64)
         return cls(sender=sender, seq=seq, t=t, rows=rows, cols=cols, values=tuple(values.tolist()))
+
+
+class ObservationMessage(_Wire):
+    """One scorer output crossing a host boundary: the cells seen and their values.
+
+    Not a drone-to-drone message; it carries a scorer's result from wherever the camera and the
+    model live to wherever the belief lives. Cells are int16 (row, col) pairs, values float32.
+    """
+
+    sender: int = Field(ge=0)
+    seq: int = Field(ge=0)
+    t: float
+    cells: tuple[tuple[int, int], ...]
+    values: tuple[float, ...]
+
+    @model_validator(mode="after")
+    def _lengths_agree(self) -> ObservationMessage:
+        if len(self.cells) != len(self.values):
+            raise ValueError(f"ObservationMessage has {len(self.cells)} cells but {len(self.values)} values")
+        return self
+
+    @classmethod
+    def from_observation(cls, obs: Observation, seq: int) -> ObservationMessage:
+        cells = np.asarray(obs.cells, dtype=CELL_DTYPE)
+        values = np.asarray(obs.values, dtype=WIRE_DTYPE).astype(np.float64)
+        return cls(sender=obs.drone_id, seq=seq, t=obs.t,
+                   cells=tuple((int(r), int(c)) for r, c in cells), values=tuple(values.tolist()))
+
+    def to_observation(self) -> Observation:
+        return Observation(self.sender, self.t, np.asarray(self.cells, dtype=np.int64).reshape(-1, 2),
+                           np.asarray(self.values, dtype=np.float64))
+
+    def to_bytes(self) -> bytes:
+        header = OBS_HEADER.pack(self.sender, self.seq, self.t, len(self.cells))
+        cells = np.asarray(self.cells, dtype=CELL_DTYPE).tobytes()
+        return header + cells + np.asarray(self.values, dtype=WIRE_DTYPE).tobytes()
+
+    @classmethod
+    def from_bytes(cls, buf: bytes) -> ObservationMessage:
+        size = OBS_HEADER.size
+        if len(buf) < size:
+            raise ValueError(f"ObservationMessage needs at least {size} header bytes, got {len(buf)}")
+        sender, seq, t, k = OBS_HEADER.unpack(buf[:size])
+        expected = size + k * (2 * CELL_DTYPE.itemsize + WIRE_DTYPE.itemsize)
+        if len(buf) != expected:
+            raise ValueError(f"ObservationMessage with {k} cells needs {expected} bytes, got {len(buf)}")
+        cells = np.frombuffer(buf[size:size + 2 * k * CELL_DTYPE.itemsize], dtype=CELL_DTYPE).reshape(-1, 2)
+        values = np.frombuffer(buf[size + 2 * k * CELL_DTYPE.itemsize:], dtype=WIRE_DTYPE).astype(np.float64)
+        return cls(sender=sender, seq=seq, t=t, cells=tuple((int(r), int(c)) for r, c in cells), values=tuple(values.tolist()))
