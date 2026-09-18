@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import logging
 from typing import TYPE_CHECKING
 
 import pytest
 
+from vlm_swarm_coverage import artifacts
 from vlm_swarm_coverage.artifacts import RunDir, git_sha
 from vlm_swarm_coverage.config import RunConfig
 
@@ -46,7 +46,8 @@ def test_open_non_run_dir_is_actionable(tmp_path: Path) -> None:
         RunDir.open(tmp_path)
 
 
-def test_git_sha_outside_repo_returns_none_and_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="vlm_swarm_coverage.artifacts"):
-        assert git_sha(tmp_path) is None
-    assert "git sha unavailable" in caplog.text
+def test_git_sha_outside_repo_returns_none_and_warns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(artifacts.log, "warning", lambda msg, *a: warnings.append(msg % a))
+    assert git_sha(tmp_path) is None
+    assert warnings and "git sha unavailable" in warnings[0]
