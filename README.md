@@ -57,7 +57,7 @@ Inside the rig so far:
 | `field.py` | The importance grid over the area and the values on it, plus the ground-truth rasteriser that turns the scene's mission weights into the answer key. |
 | `schemas.py` | Typed inter-drone messages (pose, belief) with a fixed binary wire format, so every message knows its own byte size. Decision 030. |
 | `consensus.py` | The belief-fusion interface. Only the no-fusion endpoint exists so far. |
-| `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache. Decisions 010–013. |
+| `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache keyed to one scorer. Decisions 010–014. |
 | `world.py` | First-order drone kinematics at fixed altitude. Decision 021. |
 | `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized. Decision 020. |
 | `channel.py` | The channel interface, a perfect channel, and a faulted one: per-link loss, fixed latency, byte budget per sync, seeded. Decision 031. |
@@ -65,6 +65,7 @@ Inside the rig so far:
 | `__main__.py` | `vsc-run configs/demo.toml --out runs` |
 | `bridge.py` | WSL side of the simulator bridge: poses out, observations in, wall-clock pacing. Decision 060. |
 | `render.py` | `python3 -m vlm_swarm_coverage.render configs/demo.toml` under the ROS interpreter, with Isaac running `sim/scenes/coverage_scene.py`. |
+| `calibration.py` | Raw per-view score store and a fixed-order pose sweep, so a model-stability protocol reruns unchanged on any scorer. Decision 014. |
 | `viz.py` | `python -m vlm_swarm_coverage.viz runs/<run> --video out.mp4 --summary out.png`: the belief heatmap over time beside the answer key, footprints, tracks and the Voronoi partition, all from the log. Decision 061. |
 
 Design notes and experimental records are kept privately while the work is in progress. What is

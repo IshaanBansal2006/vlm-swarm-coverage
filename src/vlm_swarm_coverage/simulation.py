@@ -155,7 +155,7 @@ def build_scorer(cfg: RunConfig, grid: Grid, ground_truth: ImportanceField) -> I
         assert cfg.scorer.model is not None
         return VLMScorer(cfg.scorer.model, grid)
     if cfg.scorer.kind == "cached":
-        return CachedScorer(OracleScorer(ground_truth), grid, path=cfg.scorer.cache_path)
+        return CachedScorer(OracleScorer(ground_truth), grid, path=cfg.scorer.cache_path, model_id=cfg.scorer.model or "oracle")
     return OracleScorer(ground_truth)
 
 
