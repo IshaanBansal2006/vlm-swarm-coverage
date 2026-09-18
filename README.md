@@ -22,6 +22,7 @@ without a simulator or a model:
 
 ```bash
 vsc-run configs/demo.toml --out runs
+python -m vlm_swarm_coverage.viz runs/demo-* --video demo.mp4 --summary demo.png
 ```
 
 The Isaac scene and the bridge are written against the predecessor's proven capture loop but have
@@ -38,7 +39,7 @@ The near-term milestones are the first live rendered run and the model behind th
 |---|---|
 | `sim/` | The Isaac Sim scene (`scenes/coverage_scene.py`) and the Windows-side launcher |
 | `config/` | DDS transport profile for the simulator ↔ WSL boundary |
-| `scripts/` | Environment setup and a bridge verification check |
+| `scripts/` | Environment setup, a bridge verification check, and the Isaac-capture footage builder |
 | `configs/` | Run configurations (`demo.toml` is the reference run) |
 | `src/vlm_swarm_coverage/` | The rig |
 | `docs/decisions/` | Decision records — context, options, choice, consequences |
@@ -61,6 +62,7 @@ Inside the rig so far:
 | `__main__.py` | `vsc-run configs/demo.toml --out runs` |
 | `bridge.py` | WSL side of the simulator bridge: poses out, observations in, wall-clock pacing. Decision 060. |
 | `render.py` | `python3 -m vlm_swarm_coverage.render configs/demo.toml` under the ROS interpreter, with Isaac running `sim/scenes/coverage_scene.py`. |
+| `viz.py` | `python -m vlm_swarm_coverage.viz runs/<run> --video out.mp4 --summary out.png`: the belief heatmap over time beside the answer key, footprints, tracks and the Voronoi partition, all from the log. Decision 061. |
 
 Design notes and experimental records are kept privately while the work is in progress. What is
 here is the engineering: the simulator integration, the transport configuration, and the structure
