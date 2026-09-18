@@ -109,7 +109,7 @@ class Simulation:
             self.channel.send(pose, t, others)
             self.channel.send(belief, t, others)
             agent.seq += 1
-            ev.write("send", t, drone=agent.drone_id, seq=agent.seq - 1, bytes=pose.nbytes + belief.nbytes)
+            ev.write("send", t, drone=agent.drone_id, seq=agent.seq - 1, bytes=pose.nbytes + belief.nbytes, receivers=len(others))
             ev.write("belief", t, drone=agent.drone_id, values=agent.belief.values.ravel().round(4).tolist())
 
     def _receive(self, t: float, ev: EventLog) -> None:
