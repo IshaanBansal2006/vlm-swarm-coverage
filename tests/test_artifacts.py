@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -46,6 +47,6 @@ def test_open_non_run_dir_is_actionable(tmp_path: Path) -> None:
 
 
 def test_git_sha_outside_repo_returns_none_and_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level("WARNING"):
+    with caplog.at_level(logging.WARNING, logger="vlm_swarm_coverage.artifacts"):
         assert git_sha(tmp_path) is None
     assert "git sha unavailable" in caplog.text

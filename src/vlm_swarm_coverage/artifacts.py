@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -99,12 +99,12 @@ class RunDir:
 
     @classmethod
     def create(cls, root: Path | str, config: RunConfig, repo: Path | None = None) -> RunDir:
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
         path = Path(root) / f"{config.name}-{stamp}"
         path.mkdir(parents=True, exist_ok=False)
         meta = {
             "run_id": path.name,
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "package_version": __version__,
             "git_sha": git_sha(repo),
         }

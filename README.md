@@ -24,10 +24,11 @@ without a simulator or a model:
 vsc-run configs/demo.toml --out runs
 ```
 
-No fusion rule exists yet: each drone's belief is only what it has seen. Nothing has been rendered. No experiments have run yet.
+The Isaac scene and the bridge are written against the predecessor's proven capture loop but have
+not yet been run live at this commit. No fusion rule exists yet: each drone's belief is only what
+it has seen. No experiments have run yet.
 
-The near-term milestones are the simulator rendering a run and the model behind the scorer
-interface.
+The near-term milestones are the first live rendered run and the model behind the scorer interface.
 
 ---
 
@@ -35,7 +36,7 @@ interface.
 
 | | |
 |---|---|
-| `sim/` | Isaac Sim scenes and the Windows-side launcher |
+| `sim/` | The Isaac Sim scene (`scenes/coverage_scene.py`) and the Windows-side launcher |
 | `config/` | DDS transport profile for the simulator ↔ WSL boundary |
 | `scripts/` | Environment setup and a bridge verification check |
 | `configs/` | Run configurations (`demo.toml` is the reference run) |
@@ -58,6 +59,8 @@ Inside the rig so far:
 | `channel.py` | The channel interface, a perfect channel, and a faulted one: per-link loss, fixed latency, byte budget per sync, seeded. Decision 031. |
 | `simulation.py` | The loop: observe, score, share, fuse, control, step, log. Assembled from config. |
 | `__main__.py` | `vsc-run configs/demo.toml --out runs` |
+| `bridge.py` | WSL side of the simulator bridge: poses out, observations in, wall-clock pacing. Decision 060. |
+| `render.py` | `python3 -m vlm_swarm_coverage.render configs/demo.toml` under the ROS interpreter, with Isaac running `sim/scenes/coverage_scene.py`. |
 
 Design notes and experimental records are kept privately while the work is in progress. What is
 here is the engineering: the simulator integration, the transport configuration, and the structure
@@ -67,7 +70,8 @@ around them.
 
 ## Getting started
 
-**Requirements** — Python 3.11+ for the library and tests. The simulation additionally needs Linux
+**Requirements** — Python 3.10+ for the library and tests (3.10 is what ROS 2 Humble ships, and the
+bridge runs there). The simulation additionally needs Linux
 or WSL2, ROS 2 Humble, and NVIDIA Isaac Sim. Model inference needs a GPU.
 
 ```bash

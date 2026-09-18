@@ -4,19 +4,35 @@ Reproducibility is a hard requirement for this project, so everything that can c
 outcome lives here and nowhere else. A run directory snapshots this object; re-running from the
 snapshot must reproduce the run.
 
-TOML is the on-disk format because Python 3.11 reads it from the standard library (`tomllib`),
-which keeps the core dependency set at numpy + pydantic. Snapshots are written as JSON because the
+TOML is the on-disk format because Python 3.11 reads it from the standard library (`tomllib`;
+`tomli` on 3.10), which keeps the core dependency set at numpy + pydantic. Snapshots are written as JSON because the
 standard library cannot write TOML; the loader accepts either.
 """
 
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def _toml_loader():  # type: ignore[no-untyped-def]
+    """tomllib on 3.11+, tomli on 3.10 (the ROS 2 Humble interpreter). JSON configs need neither."""
+    try:
+        import tomllib
+
+        return tomllib
+    except ModuleNotFoundError:
+        try:
+            import tomli
+
+            return tomli
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "reading .toml on Python < 3.11 needs tomli: pip install tomli, or pass a .json config"
+            ) from exc
 
 
 class _Strict(BaseModel):
@@ -113,7 +129,7 @@ class RunConfig(_Strict):
         path = Path(path)
         if path.suffix == ".toml":
             with path.open("rb") as fh:
-                return cls.model_validate(tomllib.load(fh))
+                return cls.model_validate(_toml_loader().load(fh))
         if path.suffix == ".json":
             return cls.model_validate_json(path.read_text())
         raise ValueError(f"config {path} must be .toml or .json, got {path.suffix!r}")
