@@ -62,3 +62,7 @@ docs/private/
 
 # Personal study aids — line-by-line explanations, not shipped
 explanations/
+
+# Local-only research code, kept out of the public tree.
+src/vlm_swarm_coverage/held/
+tests/held/
