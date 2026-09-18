@@ -21,9 +21,12 @@ the Lloyd controller, and the loop that closes them are in place. The demo confi
 without a simulator or a model:
 
 ```bash
-vsc-run configs/demo.toml --out runs
-python -m vlm_swarm_coverage.viz runs/demo-* --video demo.mp4 --summary demo.png
+bash scripts/demo.sh          # = vsc-run configs/demo.toml, then viz --video --summary
 ```
+
+Three drones start at the west edge, score what is under them with the oracle, and Lloyd
+descent spreads them along the corridor. The video shows each drone's belief filling in beside
+the answer key, with camera footprints, tracks and the Voronoi partition drawn from the log.
 
 The Isaac scene and the bridge are written against the predecessor's proven capture loop but have
 not yet been run live at this commit. No fusion rule exists yet: each drone's belief is only what
@@ -39,7 +42,7 @@ The near-term milestones are the first live rendered run and the model behind th
 |---|---|
 | `sim/` | The Isaac Sim scene (`scenes/coverage_scene.py`) and the Windows-side launcher |
 | `config/` | DDS transport profile for the simulator ↔ WSL boundary |
-| `scripts/` | Environment setup, a bridge verification check, and the Isaac-capture footage builder |
+| `scripts/` | `demo.sh` (run + render), environment setup, a bridge verification check, the Isaac-capture footage builder |
 | `configs/` | Run configurations (`demo.toml` is the reference run) |
 | `src/vlm_swarm_coverage/` | The rig |
 | `docs/decisions/` | Decision records — context, options, choice, consequences |
@@ -97,6 +100,14 @@ The comments in `scripts/ros-env.sh` explain why the DDS transport is configured
 briefly, mirrored WSL networking gives Windows and Linux the same IP address, which causes the
 default transport to select shared memory and announce locators that route back to the sender, so
 both sides are pinned to a loopback-only UDP profile with explicit peer ports.
+
+---
+
+## Checkpoints
+
+Each merged step is tagged `step-NN-<slug>` and stands alone: its tests pass and this README
+describes what exists at that commit. `git checkout step-04-closed-loop` gives the first
+end-to-end run; `step-07-viz-and-footage` the first video.
 
 ---
 
