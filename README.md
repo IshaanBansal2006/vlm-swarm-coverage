@@ -57,7 +57,7 @@ Inside the rig so far:
 | `field.py` | The importance grid over the area and the values on it, plus the ground-truth rasteriser that turns the scene's mission weights into the answer key. |
 | `schemas.py` | Typed inter-drone messages (pose, belief) with a fixed binary wire format, so every message knows its own byte size. Decision 030. |
 | `consensus.py` | The belief-fusion interface. Only the no-fusion endpoint exists so far. |
-| `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache. Decisions 010–012. |
+| `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache. Decisions 010–013. |
 | `world.py` | First-order drone kinematics at fixed altitude. Decision 021. |
 | `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized. Decision 020. |
 | `channel.py` | The channel interface, a perfect channel, and a faulted one: per-link loss, fixed latency, byte budget per sync, seeded. Decision 031. |
