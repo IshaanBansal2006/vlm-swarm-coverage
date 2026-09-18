@@ -9,16 +9,19 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.10 is the ROS 2 Humble interpreter the bridge runs under; 3.11 is the dev default.
+        python-version: ["3.10", "3.11"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
-      # Core install only — no [vlm], no [analysis]. If this step ever needs a
-      # GPU stack to succeed, the rig has stopped being reproducible and the
-      # failure should be loud.
+      # Core + dev only — no [vlm]. If this step ever needs a GPU stack to succeed, the rig has
+      # stopped being reproducible and the failure should be loud.
       - name: Install (exactly what the README tells a visitor to run)
         run: pip install -e ".[dev]"
 
@@ -26,4 +29,4 @@ jobs:
         run: pytest -q
 
       - name: Lint
-        run: ruff check src tests
+        run: ruff check src tests scripts
