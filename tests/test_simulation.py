@@ -64,3 +64,30 @@ def test_cli_runs_demo_config(tmp_path: Path, capsys) -> None:  # type: ignore[n
     cfg.write_text('name = "cli"\n[sim]\nduration_s = 2.0\n')
     assert main([str(cfg), "--out", str(tmp_path / "runs")]) == 0
     assert "cli-" in capsys.readouterr().out
+
+
+def test_faulted_run_logs_drops_and_stats(tmp_path: Path) -> None:
+    run = run_from_config(_short(channel={"drop_rate": 0.5, "latency_s": 0.3}), tmp_path)
+    drops = list(run.iter_events("drop"))
+    assert drops and all(d["reason"] == "loss" for d in drops)
+    end = next(run.iter_events("end"))
+    assert end["channel"]["dropped_loss"] == len(drops)
+    assert end["channel"]["delivered"] > 0
+
+
+def test_same_seed_same_run(tmp_path: Path) -> None:
+    cfg = _short(channel={"drop_rate": 0.4})
+    a = [e for e in run_from_config(cfg, tmp_path / "a").iter_events("pose")]
+    b = [e for e in run_from_config(cfg, tmp_path / "b").iter_events("pose")]
+    assert a == b
+
+
+def test_scorer_wrap_is_applied(tmp_path: Path) -> None:
+    seen: list[str] = []
+
+    def wrap(inner):  # type: ignore[no-untyped-def]
+        seen.append(type(inner).__name__)
+        return inner
+
+    build(_short(), scorer_wrap=wrap)
+    assert seen == ["OracleScorer"]

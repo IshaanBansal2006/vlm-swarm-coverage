@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from vlm_swarm_coverage.artifacts import RunDir
-from vlm_swarm_coverage.channel import PerfectChannel
+from vlm_swarm_coverage.channel import FaultedChannel
 from vlm_swarm_coverage.consensus import IgnoreMessages
 from vlm_swarm_coverage.control import HoldController, LloydController
 from vlm_swarm_coverage.field import Grid, ImportanceField, rasterize_ground_truth
@@ -31,6 +31,7 @@ from vlm_swarm_coverage.scoring import (
 from vlm_swarm_coverage.world import KinematicWorld
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from numpy.typing import NDArray
@@ -84,7 +85,7 @@ class Simulation:
                 self._receive(t, ev)
                 self.world.step(self._commands())
                 self._log_poses(t, ev)
-            ev.write("end", self.world.t, steps=cfg.sim.n_steps)
+            ev.write("end", self.world.t, steps=cfg.sim.n_steps, channel=dict(getattr(self.channel, "stats", {})))
         log.info("run complete: %s (%d steps)", run_dir.path, cfg.sim.n_steps)
         return run_dir
 
@@ -122,6 +123,10 @@ class Simulation:
             if agent.inbox:
                 agent.belief = self.fusion.fuse(agent.belief, agent.inbox, t)
                 agent.inbox = []
+        drain = getattr(self.channel, "drain_drops", None)
+        if drain is not None:
+            for drop in drain():
+                ev.write("drop", t, sender=drop.sender, receiver=drop.receiver, reason=drop.reason, bytes=drop.nbytes)
 
     def _commands(self) -> dict[int, NDArray[np.float64]]:
         return {
@@ -157,9 +162,20 @@ def build_controller(cfg: RunConfig) -> CoverageController:
     return LloydController(gain=cfg.controller.gain)
 
 
-def build(cfg: RunConfig, fusion: BeliefFusion | None = None, channel: Channel | None = None) -> Simulation:
-    """Assemble a simulation from config. Fusion and channel are injectable because the rule is
-    the author's and the faulted channel lives in its own module."""
+def build_channel(cfg: RunConfig) -> Channel:
+    ch = cfg.channel
+    return FaultedChannel(ch.drop_rate, ch.latency_s, ch.bytes_per_sync, seed=cfg.sim.seed)
+
+
+def build(
+    cfg: RunConfig,
+    fusion: BeliefFusion | None = None,
+    channel: Channel | None = None,
+    scorer_wrap: Callable[[ImportanceScorer], ImportanceScorer] | None = None,
+) -> Simulation:
+    """Assemble a simulation from config. Fusion is injectable because the rule is the author's;
+    the channel so tests can substitute one; `scorer_wrap` so an outer layer can wrap the scorer
+    (for example to perturb its output) without this module knowing how."""
     scene = build_scene(cfg)
     if (scene.width, scene.height) != (cfg.area.width, cfg.area.height):
         raise ValueError(
@@ -170,12 +186,15 @@ def build(cfg: RunConfig, fusion: BeliefFusion | None = None, channel: Channel |
     ground_truth = rasterize_ground_truth(scene, grid)
     world = KinematicWorld(scene.drone_starts, scene.width, scene.height, cfg.swarm.max_speed, cfg.sim.dt)
     agents = [Agent(i, ImportanceField.uniform(grid, scene.mission.floor)) for i in range(cfg.swarm.n_drones)]
+    scorer = build_scorer(cfg, grid, ground_truth)
+    if scorer_wrap is not None:
+        scorer = scorer_wrap(scorer)
     return Simulation(
         config=cfg, scene=scene, grid=grid, world=world,
-        scorer=build_scorer(cfg, grid, ground_truth),
+        scorer=scorer,
         fusion=fusion or IgnoreMessages(),
         controller=build_controller(cfg),
-        channel=channel or PerfectChannel(),
+        channel=channel or build_channel(cfg),
         agents=agents,
     )
 

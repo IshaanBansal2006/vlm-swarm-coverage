@@ -24,11 +24,10 @@ without a simulator or a model:
 vsc-run configs/demo.toml --out runs
 ```
 
-No fusion rule exists yet: each drone's belief is only what it has seen. No faulted channel exists
-yet, and nothing has been rendered. No experiments have run yet.
+No fusion rule exists yet: each drone's belief is only what it has seen. Nothing has been rendered. No experiments have run yet.
 
-The near-term milestones are a faulted channel, the simulator rendering a run, and the model
-behind the scorer interface.
+The near-term milestones are the simulator rendering a run and the model behind the scorer
+interface.
 
 ---
 
@@ -56,7 +55,7 @@ Inside the rig so far:
 | `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache. Decisions 010–012. |
 | `world.py` | First-order drone kinematics at fixed altitude. Decision 021. |
 | `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized. Decision 020. |
-| `channel.py` | The channel interface and a perfect channel. |
+| `channel.py` | The channel interface, a perfect channel, and a faulted one: per-link loss, fixed latency, byte budget per sync, seeded. Decision 031. |
 | `simulation.py` | The loop: observe, score, share, fuse, control, step, log. Assembled from config. |
 | `__main__.py` | `vsc-run configs/demo.toml --out runs` |
 
