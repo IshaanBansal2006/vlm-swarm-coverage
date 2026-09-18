@@ -129,13 +129,18 @@ class VLMScorer:
 class CachedScorer:
     """Memoise a scorer by pose bucket: the cell the drone is over and its altitude rounded to
     `altitude_step`. Yaw is ignored, which assumes the wrapped scorer's output is view-invariant
-    in yaw; state that assumption wherever cached results are reported."""
+    in yaw; state that assumption wherever cached results are reported.
 
-    def __init__(self, inner: ImportanceScorer, grid: Grid, path: Path | None = None, altitude_step: float = 2.0) -> None:
+    The cache is keyed to one scorer (`model_id`), one grid and one altitude step, and refuses to
+    load a file written for any other, so two scorers' caches can live side by side and a sweep
+    can be replayed against either without silently mixing them (decision 014)."""
+
+    def __init__(self, inner: ImportanceScorer, grid: Grid, path: Path | None = None, altitude_step: float = 2.0, model_id: str = "oracle") -> None:
         self.inner = inner
         self.grid = grid
         self.path = path
         self.altitude_step = altitude_step
+        self.model_id = model_id
         self._store: dict[str, tuple[NDArray[np.int64], NDArray[np.float64]]] = {}
         self.hits = 0
         self.misses = 0
@@ -158,22 +163,34 @@ class CachedScorer:
         self._store[k] = (obs.cells, obs.values)
         return obs
 
+    def _header(self) -> dict[str, object]:
+        return {"model_id": self.model_id, "altitude_step": self.altitude_step,
+                "cell_size": self.grid.cell_size, "grid": list(self.grid.shape)}
+
     def save(self) -> None:
         if self.path is None:
             raise ValueError("CachedScorer has no path; construct it with path=... to persist")
-        payload = {k: {"cells": c.tolist(), "values": v.tolist()} for k, (c, v) in self._store.items()}
+        entries = {k: {"cells": c.tolist(), "values": v.tolist()} for k, (c, v) in self._store.items()}
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(payload))
-        log.info("importance cache saved: %d entries -> %s", len(payload), self.path)
+        self.path.write_text(json.dumps({**self._header(), "entries": entries}))
+        log.info("importance cache saved: %d entries for %s -> %s", len(entries), self.model_id, self.path)
 
     def _load(self, path: Path) -> None:
         raw = json.loads(path.read_text())
-        for k, entry in raw.items():
+        if "entries" not in raw:
+            raise ValueError(f"{path} is a pre-014 cache without a model header; delete it and re-score")
+        mismatches = {k: (raw.get(k), v) for k, v in self._header().items() if raw.get(k) != v}
+        if mismatches:
+            raise ValueError(
+                f"cache {path} was written for {mismatches}; pass a different cache_path per scorer, "
+                f"grid and altitude step instead of sharing one file"
+            )
+        for k, entry in raw["entries"].items():
             self._store[k] = (
                 np.asarray(entry["cells"], dtype=np.int64).reshape(-1, 2),
                 np.asarray(entry["values"], dtype=np.float64),
             )
-        log.info("importance cache loaded: %d entries <- %s", len(self._store), path)
+        log.info("importance cache loaded: %d entries for %s <- %s", len(self._store), self.model_id, path)
 
 
 def apply_observation(field: ImportanceField, obs: Observation) -> None:
