@@ -81,3 +81,15 @@ def test_random_scene_is_reproducible_and_keeps_distractors_off_the_road() -> No
         assert abs(d.position[1] - a.road.y_center) > half
     for t in a.targets():
         assert abs(t.position[1] - a.road.y_center) <= half
+
+
+def test_random_scene_moves_the_road_and_keeps_everything_inside() -> None:
+    from vlm_swarm_coverage.scene import random_scene
+
+    ys = {random_scene(seed).road.y_center for seed in range(12)}
+    assert len(ys) > 6 and all(12.0 <= y <= 28.0 for y in ys)
+    for seed in range(12):
+        s = random_scene(seed)
+        assert all(0 <= f.position[1] <= s.height for f in s.features)
+        assert all(abs(f.position[1] - s.road.y_center) <= s.road.width / 4 + 1e-9 for f in s.targets())
+        assert all(abs(f.position[1] - s.road.y_center) >= s.road.width / 2 + 2.0 - 1e-9 for f in s.distractors())

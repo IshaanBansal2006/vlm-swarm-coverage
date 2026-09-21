@@ -194,11 +194,13 @@ def random_scene(
 ) -> Scene:
     """A seeded layout for sweeps: targets on the road, distractors on the verges.
 
-    Same seed, same scene, every time. Targets are spread along x so two never overlap; distractors
-    are kept off the road so a distractor never sits on top of a target.
+    Same seed, same scene, every time. The road's offset across the area is drawn per seed from
+    the middle 40 % of the height, so that no fixed position (the map's centre in particular) is
+    a good place to be on every layout. Targets are spread along x so two never overlap;
+    distractors are kept off the road so a distractor never sits on top of a target.
     """
     rng = np.random.default_rng(seed)
-    road = Road(y_center=height / 2, width=6.0)
+    road = Road(y_center=float(height * rng.uniform(0.3, 0.7)), width=6.0)
     features = list(_place_targets(rng, n_targets, width, road))
     features += _place_distractors(rng, n_distractors, width, height, road)
     return Scene(
@@ -234,6 +236,7 @@ def _place_distractors(
         label = labels[rng.integers(len(labels))]
         x = float(rng.uniform(4.0, width - 4.0))
         side = 1.0 if rng.random() < 0.5 else -1.0
-        y = road.y_center + side * rng.uniform(verge, min(height / 2 - 2.0, verge + 10.0))
+        room = min(road.y_center, height - road.y_center) - 2.0
+        y = road.y_center + side * rng.uniform(verge, max(verge + 0.5, min(room, verge + 10.0)))
         out.append(Feature(f"distractor_{i}", label, (x, float(y), 0.0), yaw=float(rng.uniform(-0.5, 0.5))))
     return out

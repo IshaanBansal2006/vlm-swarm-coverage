@@ -73,10 +73,14 @@ class Cell:
 def _flatten(assignments: dict[str, Any]) -> dict[str, Any]:
     """A level that is a dict is a composite: `"message": {"kind": "topk", "k": 5}` becomes
     `message.kind` and `message.k`, so one axis can move several keys of one factor together.
-    Hook parameters (`_name`) keep their dict values whole."""
+    Under the axis key `"*"` the level's keys are taken as they are, already dotted, for factors
+    that span sections (a scene seed and the cache rendered for it). Hook parameters (`_name`)
+    keep their dict values whole."""
     out: dict[str, Any] = {}
     for key, value in assignments.items():
-        if isinstance(value, dict) and not key.startswith("_"):
+        if isinstance(value, dict) and key == "*":
+            out.update(value)  # a level that sets several dotted keys as they are (a layout, say)
+        elif isinstance(value, dict) and not key.startswith("_"):
             for sub, sub_value in value.items():
                 out[f"{key}.{sub}"] = sub_value
         else:
