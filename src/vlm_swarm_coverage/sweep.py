@@ -44,7 +44,7 @@ class SweepSpec(BaseModel):
 
     name: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
     base: Path
-    axes: dict[str, list[Any]] = Field(default_factory=dict, description="Dotted config key (or _param) -> values.")
+    axes: dict[str, list[Any]] = Field(default_factory=dict, description="Dotted config key (or _param) -> values; a dict value is a composite level whose keys nest under the axis key.")
     design: Literal["full", "one_at_a_time"] = "full"
     seeds: list[int] = Field(default_factory=lambda: [0])
     cells: list[dict[str, Any]] = Field(default_factory=list, description="Explicit extra cells, each a dict of overrides.")
@@ -70,7 +70,22 @@ class Cell:
     params: dict[str, Any]
 
 
+def _flatten(assignments: dict[str, Any]) -> dict[str, Any]:
+    """A level that is a dict is a composite: `"message": {"kind": "topk", "k": 5}` becomes
+    `message.kind` and `message.k`, so one axis can move several keys of one factor together.
+    Hook parameters (`_name`) keep their dict values whole."""
+    out: dict[str, Any] = {}
+    for key, value in assignments.items():
+        if isinstance(value, dict) and not key.startswith("_"):
+            for sub, sub_value in value.items():
+                out[f"{key}.{sub}"] = sub_value
+        else:
+            out[key] = value
+    return out
+
+
 def _split(assignments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    assignments = _flatten(assignments)
     overrides = {k: v for k, v in assignments.items() if not k.startswith("_")}
     params = {k[1:]: v for k, v in assignments.items() if k.startswith("_")}
     return overrides, params
@@ -94,6 +109,7 @@ def expand(spec: SweepSpec) -> list[Cell]:
     cells: list[Cell] = []
     seen: set[str] = set()
     for combo in combos:
+        combo = _flatten(combo)
         for seed in ([None] if "sim.seed" in combo else spec.seeds):
             assignments = dict(combo)
             if seed is not None:

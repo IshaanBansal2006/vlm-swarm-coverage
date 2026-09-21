@@ -92,3 +92,15 @@ def test_cli_dry_run_and_spec_loading(tmp_path: Path, capsys) -> None:  # type: 
     assert out.count("channel.drop_rate") == 2 and "0 rows" in out
     assert main([str(spec_path), "--out", str(tmp_path / "out"), "--workers", "2"]) == 0
     assert json.loads((tmp_path / "out" / "cli" / "spec.json").read_text())["name"] == "cli"
+
+
+def test_composite_axis_levels_move_several_keys_together(tmp_path: Path) -> None:
+    spec = SweepSpec(name="c", base=_base(tmp_path), seeds=[0],
+                     axes={"message": [{"kind": "dense"}, {"kind": "topk", "k": 5}], "_error": [{"sigma": 0.1}]})
+    cells = expand(spec)
+    assert len(cells) == 2
+    assert cells[1].overrides == {"message.kind": "topk", "message.k": 5, "sim.seed": 0} and cells[1].params == {"error": {"sigma": 0.1}}
+    cfg = apply_overrides(RunConfig(name="x"), cells[1].overrides)
+    assert cfg.message.kind == "topk" and cfg.message.k == 5
+    explicit = expand(SweepSpec(name="c", base=_base(tmp_path), seeds=[1], cells=[{"prior": {"kind": "other_scene", "scene_seed": 3}}]))
+    assert explicit[0].overrides == {"prior.kind": "other_scene", "prior.scene_seed": 3, "sim.seed": 1}
