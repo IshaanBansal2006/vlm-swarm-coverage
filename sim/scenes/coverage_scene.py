@@ -50,6 +50,7 @@ parser.add_argument("--record-nadir", action="store_true", help="Save every scor
 parser.add_argument("--sweep", default=None, help="views.json: render one nadir frame per view, no loop, no ROS")
 parser.add_argument("--no-ros", action="store_true")
 parser.add_argument("--settle", type=int, default=4, help="Renderer updates after moving a camera before grabbing")
+parser.add_argument("--textures", default=None, help="Directory of CC0 textures (default: <repo>/sim/assets/textures); 'none' for flat colours")
 args, _unknown = parser.parse_known_args()
 if args.sweep:
     args.no_ros = True
@@ -81,6 +82,7 @@ from pxr import Gf, UsdGeom  # noqa: E402
 if not args.no_ros:
     app_utils.enable_extension("isaacsim.ros2.bridge")
 app_utils.enable_extension("omni.replicator.core")
+app_utils.enable_extension("omni.kit.material.library")
 simulation_app.update()
 
 import omni.replicator.core as rep  # noqa: E402
@@ -130,9 +132,54 @@ COLORS = {
 }
 _materials = {}
 
+# Surfaces a model looks at get a real, world-projected texture (decision 064): Poly Haven CC0
+# maps fetched by scripts/fetch-textures.sh, tiled at their physical size in metres. Anything
+# not listed keeps its flat colour.
+TEXTURES = {
+    "ground": ("sparse_grass.jpg", 2.0), "road": ("clean_asphalt.jpg", 2.1), "damaged_road": ("road_damaged.jpg", 2.2),
+    "debris": ("aerial_ground_rock.jpg", 4.0), "tree": ("leafy_grass.jpg", 1.5),
+}
+TEXTURE_DIR = None if args.textures == "none" else Path(args.textures or (Path(args.repo) / "sim" / "assets" / "textures"))
+_textured = {}
+
+
+def _texture_material(key):
+    """An OmniPBR material whose diffuse map is projected in world space, so no UVs are needed."""
+    import omni.kit.commands
+    from pxr import Sdf, UsdShade
+
+    if key in _textured:
+        return _textured[key]
+    file, size_m = TEXTURES[key]
+    path = TEXTURE_DIR / file
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing; run scripts/fetch-textures.sh")
+    mtl_path = f"/World/Looks/tex_{key}"
+    omni.kit.commands.execute("CreateMdlMaterialPrim", mtl_url="OmniPBR.mdl", mtl_name="OmniPBR", mtl_path=mtl_path)
+    stage = stage_utils.get_current_stage()
+    shader = UsdShade.Shader(stage.GetPrimAtPath(f"{mtl_path}/Shader"))
+    shader.CreateInput("diffuse_texture", Sdf.ValueTypeNames.Asset).Set(str(path))
+    shader.CreateInput("project_uvw", Sdf.ValueTypeNames.Bool).Set(True)
+    shader.CreateInput("world_or_object", Sdf.ValueTypeNames.Bool).Set(False)
+    shader.CreateInput("texture_scale", Sdf.ValueTypeNames.Float2).Set(Gf.Vec2f(1.0 / size_m, 1.0 / size_m))
+    shader.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(0.85)
+    _textured[key] = UsdShade.Material(stage.GetPrimAtPath(mtl_path))
+    return _textured[key]
+
 
 def paint(prim, key):
-    """Cosmetic: the oracle reads the scene description, not pixels. A model reads pixels."""
+    """What a model sees. The oracle reads the scene description, not pixels."""
+    if TEXTURE_DIR is not None and key in TEXTURES:
+        try:
+            from pxr import UsdShade
+
+            material = _texture_material(key)
+            stage = stage_utils.get_current_stage()
+            for p in prim.paths if hasattr(prim, "paths") else [prim.prim_path]:
+                UsdShade.MaterialBindingAPI.Apply(stage.GetPrimAtPath(p)).Bind(material)
+            return
+        except Exception as exc:
+            log(f"WARNING texture({key}) failed, falling back to flat colour: {exc!r}")
     try:
         from isaacsim.core.experimental.materials import PreviewSurfaceMaterial
 

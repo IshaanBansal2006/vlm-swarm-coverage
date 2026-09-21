@@ -69,3 +69,6 @@ tests/held/
 
 # Video compositions and renders — local only
 brag-output*/
+
+# CC0 textures fetched by scripts/fetch-textures.sh (Poly Haven); not versioned
+sim/assets/textures/*.jpg
