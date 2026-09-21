@@ -76,10 +76,17 @@ class Grid:
 
 @dataclass
 class ImportanceField:
-    """Values on a grid. Mutable on purpose: the scorer updates cells in place as views arrive."""
+    """Values on a grid. Mutable on purpose: the scorer updates cells in place as views arrive.
+
+    `stamps`, when present, records the sim time of the observation behind each cell's value;
+    NaN marks a cell that has never been observed and still holds its prior. An answer key or a
+    plain density carries no stamps. A drone's belief always does, because the fusion rule and the
+    wire format need to tell "observed at the floor" from "never seen" (decisions 022, 032).
+    """
 
     grid: Grid
     values: NDArray[np.float64]
+    stamps: NDArray[np.float64] | None = None
 
     def __post_init__(self) -> None:
         self.values = np.asarray(self.values, dtype=np.float64)
@@ -87,13 +94,31 @@ class ImportanceField:
             raise ValueError(
                 f"values shape {self.values.shape} does not match grid shape {self.grid.shape}"
             )
+        if self.stamps is not None:
+            self.stamps = np.asarray(self.stamps, dtype=np.float64)
+            if self.stamps.shape != self.grid.shape:
+                raise ValueError(
+                    f"stamps shape {self.stamps.shape} does not match grid shape {self.grid.shape}"
+                )
 
     @classmethod
     def uniform(cls, grid: Grid, value: float) -> ImportanceField:
         return cls(grid, np.full(grid.shape, value, dtype=np.float64))
 
+    @classmethod
+    def prior(cls, grid: Grid, value: float) -> ImportanceField:
+        """A belief before any observation: uniform value, every cell marked never observed."""
+        return cls(grid, np.full(grid.shape, value, dtype=np.float64), np.full(grid.shape, np.nan))
+
     def copy(self) -> ImportanceField:
-        return ImportanceField(self.grid, self.values.copy())
+        return ImportanceField(self.grid, self.values.copy(), None if self.stamps is None else self.stamps.copy())
+
+    @property
+    def observed(self) -> NDArray[np.bool_]:
+        """True where the value comes from an observation (own or fused). All True without stamps."""
+        if self.stamps is None:
+            return np.ones(self.grid.shape, dtype=bool)
+        return ~np.isnan(self.stamps)
 
     @property
     def total_mass(self) -> float:

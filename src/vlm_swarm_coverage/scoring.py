@@ -194,5 +194,8 @@ class CachedScorer:
 
 
 def apply_observation(field: ImportanceField, obs: Observation) -> None:
-    """Overwrite the observed cells with the new values (decision 011). No memory here."""
+    """Overwrite the observed cells with the new values (decision 011) and, when the field keeps
+    observation stamps, record when they were seen. No memory here."""
     field.values[obs.cells[:, 0], obs.cells[:, 1]] = obs.values
+    if field.stamps is not None:
+        field.stamps[obs.cells[:, 0], obs.cells[:, 1]] = obs.t

@@ -16,7 +16,7 @@ import numpy as np
 
 from vlm_swarm_coverage.artifacts import RunDir
 from vlm_swarm_coverage.channel import FaultedChannel
-from vlm_swarm_coverage.consensus import IgnoreMessages
+from vlm_swarm_coverage.consensus import AgeWeightedAverage, IgnoreMessages
 from vlm_swarm_coverage.control import HoldController, LloydController
 from vlm_swarm_coverage.field import Grid, ImportanceField, rasterize_ground_truth
 from vlm_swarm_coverage.scene import default_scene, random_scene
@@ -110,7 +110,8 @@ class Simulation:
             self.channel.send(belief, t, others)
             agent.seq += 1
             ev.write("send", t, drone=agent.drone_id, seq=agent.seq - 1, bytes=pose.nbytes + belief.nbytes, receivers=len(others))
-            ev.write("belief", t, drone=agent.drone_id, values=agent.belief.values.ravel().round(4).tolist())
+            ev.write("belief", t, drone=agent.drone_id, values=agent.belief.values.ravel().round(4).tolist(),
+                     ages=list(belief.ages))
 
     def _receive(self, t: float, ev: EventLog) -> None:
         by_agent = {a.drone_id: a for a in self.agents}
@@ -159,6 +160,12 @@ def build_scorer(cfg: RunConfig, grid: Grid, ground_truth: ImportanceField) -> I
     return OracleScorer(ground_truth)
 
 
+def build_fusion(cfg: RunConfig) -> BeliefFusion:
+    if cfg.fusion.kind == "none":
+        return IgnoreMessages()
+    return AgeWeightedAverage(cfg.fusion.tau_s)
+
+
 def build_controller(cfg: RunConfig) -> CoverageController:
     if cfg.controller.kind == "hold":
         return HoldController()
@@ -178,10 +185,10 @@ def build(
     scorer: ImportanceScorer | None = None,
     on_step: Callable[[Simulation, float], None] | None = None,
 ) -> Simulation:
-    """Assemble a simulation from config. Fusion is injectable because the rule is the author's;
-    the channel so tests can substitute one; `scorer_wrap` so an outer layer can wrap the scorer
-    without this module knowing how; `scorer` replaces the configured
-    scorer outright (a remote one, say); `on_step` runs after every world step (a renderer bridge)."""
+    """Assemble a simulation from config. `fusion` overrides the configured rule; the channel is
+    injectable so tests can substitute one; `scorer_wrap` lets an outer layer wrap the scorer
+    without this module knowing how; `scorer` replaces the configured scorer outright (a remote
+    one, say); `on_step` runs after every world step (a renderer bridge)."""
     scene = build_scene(cfg)
     if (scene.width, scene.height) != (cfg.area.width, cfg.area.height):
         raise ValueError(
@@ -191,14 +198,14 @@ def build(
     grid = Grid(cfg.area.width, cfg.area.height, cfg.area.cell_size)
     ground_truth = rasterize_ground_truth(scene, grid)
     world = KinematicWorld(scene.drone_starts, scene.width, scene.height, cfg.swarm.max_speed, cfg.sim.dt)
-    agents = [Agent(i, ImportanceField.uniform(grid, scene.mission.floor)) for i in range(cfg.swarm.n_drones)]
+    agents = [Agent(i, ImportanceField.prior(grid, scene.mission.floor)) for i in range(cfg.swarm.n_drones)]
     scorer = scorer or build_scorer(cfg, grid, ground_truth)
     if scorer_wrap is not None:
         scorer = scorer_wrap(scorer)
     return Simulation(
         config=cfg, scene=scene, grid=grid, world=world,
         scorer=scorer,
-        fusion=fusion or IgnoreMessages(),
+        fusion=fusion if fusion is not None else build_fusion(cfg),
         controller=build_controller(cfg),
         channel=channel or build_channel(cfg),
         agents=agents,

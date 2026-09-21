@@ -50,3 +50,13 @@ def test_unsupported_suffix_is_actionable(tmp_path: Path) -> None:
     p.write_text("name: x\n")
     with pytest.raises(ValueError, match=r"\.toml or \.json"):
         RunConfig.load(p)
+
+
+def test_fusion_section_round_trips_including_infinite_tau(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = RunConfig.model_validate({"fusion": {"kind": "age_weighted", "tau_s": float("inf")}})
+    cfg.dump_json(tmp_path / "c.json")
+    back = RunConfig.load(tmp_path / "c.json")
+    assert back.fusion.tau_s == float("inf") and back == cfg
+    assert RunConfig().fusion.kind == "age_weighted"
+    with pytest.raises(ValidationError):
+        RunConfig.model_validate({"fusion": {"kind": "max"}})
