@@ -32,7 +32,10 @@ The Isaac scene and the bridge are written against the predecessor's proven capt
 not yet been run live at this commit. Drones now fuse received beliefs by an age-weighted per-cell
 average (decision 022). No experiments have run yet.
 
-The near-term milestones are the first live rendered run and the model behind the scorer interface.
+Four model backends (CLIPSeg, SigLIP 2, RemoteCLIP, OWLv2) sit behind the scorer interface and score
+synthetic frames deterministically on a laptop GPU; none has yet been run on a rendered frame or
+calibrated. The near-term milestones are the first live rendered run with a model in the loop and
+the model-stability study.
 
 ---
 
@@ -59,6 +62,7 @@ Inside the rig so far:
 | `compress.py` | Sender-side encoders: the whole field, the top-k observed cells, a quantised field, or poses only. What goes on the wire is a run parameter. Decision 033. |
 | `consensus.py` | Belief fusion: the no-communication endpoint, and the age-weighted per-cell average that lets drones converge where they exchange messages and disagree where they do not. Decision 022. |
 | `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache keyed to one scorer. Decisions 010–014. |
+| `models.py` | The models behind the slot: CLIPSeg, SigLIP 2 and RemoteCLIP made dense by tiling, OWLv2 as a detector; the nadir image-to-cell mapping and the affine score calibration. Needs the `[vlm]` extra. Decision 015. |
 | `world.py` | First-order drone kinematics at fixed altitude. Decision 021. |
 | `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized (decision 020); a replay controller that retraces a logged run so motion can be held fixed (decision 023). |
 | `channel.py` | The channel interface, a perfect channel, and a faulted one: per-link loss, fixed latency, byte budget per sync, seeded. Decision 031. |

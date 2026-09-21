@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from vlm_swarm_coverage.field import Grid, ImportanceField
+    from vlm_swarm_coverage.scene import Mission
 
 log = logging.getLogger(__name__)
 
@@ -105,10 +106,14 @@ class OracleScorer:
 
 class VLMScorer:
     """The model slot. Construction checks the `[vlm]` extra is installed so a missing stack fails
-    at startup rather than at the first frame. Scoring is not implemented yet: it needs a chosen
-    model, a prompt, and the GPU host, none of which exist in this repository at this tag."""
+    at startup rather than at the first frame, then loads the named model (decision 015). Scoring
+    needs a frame on the view: it maps the model's importance map onto the cells in the camera
+    footprint and applies the affine score calibration."""
 
-    def __init__(self, model: str, grid: Grid) -> None:
+    def __init__(
+        self, model: str, grid: Grid, mission: Mission, prompt_set: str = "mission",
+        calibration: Path | None = None, device: str | None = None,
+    ) -> None:
         try:
             import torch  # noqa: F401
             import transformers  # noqa: F401
@@ -116,14 +121,15 @@ class VLMScorer:
             raise ImportError(
                 "VLMScorer needs the [vlm] extra: uv pip install -e '.[vlm]' on the GPU host"
             ) from exc
+        from vlm_swarm_coverage.models import ScoreCalibration, load_scorer
+
         self.model = model
         self.grid = grid
+        cal = ScoreCalibration.load(calibration) if calibration else ScoreCalibration(floor=mission.floor)
+        self._impl = load_scorer(model, grid, mission, prompt_set, cal, device)
 
     def score(self, view: View) -> Observation:
-        raise NotImplementedError(
-            f"VLMScorer({self.model!r}) has no scoring implementation yet; use scorer.kind='oracle' "
-            f"or 'cached' until the model path lands"
-        )
+        return self._impl.score(view)
 
 
 class CachedScorer:

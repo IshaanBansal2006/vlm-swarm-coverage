@@ -78,6 +78,7 @@ class Mission:
     text: str
     weights: dict[str, float]
     floor: float = 0.05
+    phrases: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         unknown = set(self.weights) - set(FEATURE_EXTENTS)
@@ -85,9 +86,16 @@ class Mission:
             raise ValueError(f"mission weights name unknown labels {sorted(unknown)}")
         if self.floor < 0:
             raise ValueError(f"mission floor must be >= 0, got {self.floor}")
+        unknown = set(self.phrases) - set(FEATURE_EXTENTS)
+        if unknown:
+            raise ValueError(f"mission phrases name unknown labels {sorted(unknown)}")
 
     def weight(self, label: str) -> float:
         return self.weights.get(label, 0.0)
+
+    def phrase(self, label: str) -> str:
+        """What a model is asked to look for, for one label; the label's words by default."""
+        return self.phrases.get(label, label.replace("_", " "))
 
 
 @dataclass(frozen=True)
@@ -135,6 +143,11 @@ STORM_DAMAGE_MISSION = Mission(
         "debris blocking the road, and vehicles that are stranded or abandoned."
     ),
     weights={"damaged_road": 1.0, "debris": 0.8, "stalled_vehicle": 0.9},
+    phrases={
+        "damaged_road": "washed-out or cracked road surface",
+        "debris": "debris blocking the road",
+        "stalled_vehicle": "a stranded or abandoned vehicle",
+    },
 )
 
 

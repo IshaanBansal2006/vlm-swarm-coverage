@@ -23,6 +23,7 @@ vlm = [
     "torch>=2.2",
     "transformers>=4.40",
     "pillow>=10.0",
+    "open_clip_torch>=2.24",
 ]
 # Analysis and plotting.
 analysis = [

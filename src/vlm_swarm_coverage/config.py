@@ -89,6 +89,9 @@ class ScorerConfig(_Strict):
     period_s: float = Field(1.0, gt=0, description="How often a drone scores its view.")
     model: str | None = Field(None, description="Model identifier for kind='vlm'.")
     cache_path: Path | None = Field(None, description="Importance cache for kind='cached'.")
+    prompt_set: Literal["mission", "null"] = Field("mission", description="Mission phrases, or one generic phrase.")
+    calibration: Path | None = Field(None, description="Affine score calibration JSON for kind='vlm'.")
+    device: str | None = Field(None, description="torch device for kind='vlm'; default picks CUDA if present.")
 
     @model_validator(mode="after")
     def _kind_has_what_it_needs(self) -> ScorerConfig:
