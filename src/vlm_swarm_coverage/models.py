@@ -13,6 +13,13 @@ model's own units. Three families:
 footprint to its pixel box and averages the map there, then applies an affine `ScoreCalibration`
 so the value lands in importance units. Prompts come from the mission (`build_prompts`).
 
+Every backend returns per-phrase *logits* (k, h, w) on a comparable scale: the decoder logits
+for CLIPSeg, the model's scaled and biased cosine for SigLIP, 100 x cosine for CLIP-style models.
+`combine` then either takes each phrase's own sigmoid (`contrast=False`) or the softmax across
+all phrases, target and background alike (`contrast=True`, decision 016), and keeps the strongest
+weighted target. Contrast is what makes a similarity model say "this tile is more road than
+grass" instead of "this tile is aerial imagery", which raw cosines mostly say.
+
 torch is imported inside the backends so this module imports without it; the backends are only
 constructed when a model is asked for.
 """
@@ -50,23 +57,36 @@ MODEL_IDS: dict[str, tuple[str, str]] = {
     "owlv2": ("owlv2", "google/owlv2-base-patch16-ensemble"),
 }
 NULL_PHRASE = "something important"
+BACKGROUND_PHRASES: tuple[str, ...] = ("grass", "bare soil", "an asphalt road", "a tree", "a building roof", "an empty field")
+CLIP_LOGIT_SCALE = 100.0
 
 
 @dataclass(frozen=True)
 class Prompt:
+    """A phrase and its importance weight; weight 0 marks a background phrase that exists only to
+    be contrasted against (a target's probability is taken relative to it, never reported)."""
+
     phrase: str
     weight: float
 
+    @property
+    def is_target(self) -> bool:
+        return self.weight > 0
 
-def build_prompts(mission: Mission, prompt_set: str = "mission") -> list[Prompt]:
-    """`mission`: one phrase per weighted label. `null`: a single generic phrase at weight one."""
+
+def build_prompts(mission: Mission, prompt_set: str = "mission", contrast: bool = True) -> list[Prompt]:
+    """`mission`: one phrase per weighted label. `null`: a single generic phrase at weight one.
+    With `contrast`, the background phrases follow at weight zero."""
     if prompt_set == "null":
-        return [Prompt(NULL_PHRASE, 1.0)]
-    if prompt_set != "mission":
+        prompts = [Prompt(NULL_PHRASE, 1.0)]
+    elif prompt_set == "mission":
+        prompts = [Prompt(mission.phrase(label), w) for label, w in sorted(mission.weights.items()) if w > 0]
+        if not prompts:
+            raise ValueError("the mission has no positively weighted labels to prompt for")
+    else:
         raise ValueError(f"prompt_set must be 'mission' or 'null', got {prompt_set!r}")
-    prompts = [Prompt(mission.phrase(label), w) for label, w in sorted(mission.weights.items()) if w > 0]
-    if not prompts:
-        raise ValueError("the mission has no positively weighted labels to prompt for")
+    if contrast:
+        prompts += [Prompt(b, 0.0) for b in BACKGROUND_PHRASES]
     return prompts
 
 
@@ -159,11 +179,21 @@ def _features(out):  # type: ignore[no-untyped-def]
     return getattr(out, "pooler_output", None) if hasattr(out, "pooler_output") else out
 
 
-def combine(maps: NDArray[np.float64], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
-    """(k, h, w) per-phrase maps -> (h, w): the strongest weighted phrase, mirroring the answer
-    key's rule that a cell takes its most important feature."""
+def combine(logits: NDArray[np.float64], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+    """(k, h, w) per-phrase logits -> (h, w) importance in [0, 1]: each target phrase's probability
+    times its weight, keeping the strongest, mirroring the answer key's rule that a cell takes its
+    most important feature. With any background phrase present the probabilities are a softmax
+    across all phrases (contrast); without, each phrase's own sigmoid."""
+    logits = np.asarray(logits, dtype=np.float64)
+    if logits.shape[0] != len(prompts):
+        raise ValueError(f"{logits.shape[0]} logit maps for {len(prompts)} prompts")
+    if any(not p.is_target for p in prompts):
+        shifted = logits - logits.max(axis=0, keepdims=True)
+        probs = np.exp(shifted) / np.exp(shifted).sum(axis=0, keepdims=True)
+    else:
+        probs = 1.0 / (1.0 + np.exp(-logits))
     weights = np.array([p.weight for p in prompts])[:, None, None]
-    return (maps * weights).max(axis=0)
+    return (probs * weights).max(axis=0)
 
 
 class ClipSegBackend:
@@ -186,7 +216,7 @@ class ClipSegBackend:
         inputs = self.processor(text=texts, images=[image] * len(texts), padding=True, return_tensors="pt").to(self.device)
         with self._torch.inference_mode():
             logits = self.model(**inputs).logits
-        maps = self._torch.sigmoid(logits).float().cpu().numpy().reshape(len(texts), *logits.shape[-2:])
+        maps = logits.float().cpu().numpy().reshape(len(texts), *logits.shape[-2:])
         return combine(maps, prompts)
 
 
@@ -236,7 +266,9 @@ class TileBackend:
             img = img / img.norm(dim=-1, keepdim=True)
             cos = img @ text.T  # (tiles, phrases)
             if scale is not None and bias is not None:
-                cos = self._torch.sigmoid(cos * scale.exp() + bias)
+                cos = cos * scale.exp() + bias
+            else:
+                cos = cos * CLIP_LOGIT_SCALE
             maps = cos.T.detach().float().cpu().numpy().reshape(len(prompts), rows, cols)
         return combine(maps, prompts)
 
@@ -277,8 +309,8 @@ class OpenClipTileBackend(TileBackend):
         with self._torch.inference_mode():
             img = self.model.encode_image(batch)
         img = img / img.norm(dim=-1, keepdim=True)
-        cos = (img @ self._text(tuple(p.phrase for p in prompts)).T).T
-        return combine(cos.float().cpu().numpy().reshape(len(prompts), rows, cols), prompts)
+        logits = (img @ self._text(tuple(p.phrase for p in prompts)).T).T * CLIP_LOGIT_SCALE
+        return combine(logits.float().cpu().numpy().reshape(len(prompts), rows, cols), prompts)
 
 
 class Owlv2Backend:
@@ -300,7 +332,8 @@ class Owlv2Backend:
 
         frame = np.asarray(frame)
         image = Image.fromarray(frame)
-        texts = [[p.phrase for p in prompts]]
+        targets = [p for p in prompts if p.is_target]
+        texts = [[p.phrase for p in targets]]
         inputs = self.processor(text=texts, images=image, return_tensors="pt").to(self.device)
         with self._torch.inference_mode():
             outputs = self.model(**inputs)
@@ -312,7 +345,7 @@ class Owlv2Backend:
             x0, x1 = max(0, x0), min(frame.shape[1], x1)
             y0, y1 = max(0, y0), min(frame.shape[0], y1)
             if x1 > x0 and y1 > y0:
-                out[y0:y1, x0:x1] = np.maximum(out[y0:y1, x0:x1], float(score) * prompts[int(label)].weight)
+                out[y0:y1, x0:x1] = np.maximum(out[y0:y1, x0:x1], float(score) * targets[int(label)].weight)
         return out
 
 
@@ -355,7 +388,7 @@ def load_backend(model: str, device: str | None = None) -> ImageScorer:
 
 def load_scorer(
     model: str, grid: Grid, mission: Mission, prompt_set: str = "mission",
-    calibration: ScoreCalibration | None = None, device: str | None = None,
+    calibration: ScoreCalibration | None = None, device: str | None = None, contrast: bool = True,
 ) -> DenseImportanceScorer:
-    log.info("loading model %s (%s) for prompt set %s", model, MODEL_IDS.get(model, ("?", "?"))[1], prompt_set)
-    return DenseImportanceScorer(load_backend(model, device), grid, build_prompts(mission, prompt_set), calibration)
+    log.info("loading model %s (%s) for prompt set %s, contrast=%s", model, MODEL_IDS.get(model, ("?", "?"))[1], prompt_set, contrast)
+    return DenseImportanceScorer(load_backend(model, device), grid, build_prompts(mission, prompt_set, contrast), calibration)

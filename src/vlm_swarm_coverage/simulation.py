@@ -163,7 +163,7 @@ def build_scorer(cfg: RunConfig, grid: Grid, ground_truth: ImportanceField, scen
     if cfg.scorer.kind == "vlm":
         assert cfg.scorer.model is not None
         return VLMScorer(cfg.scorer.model, grid, scene.mission, cfg.scorer.prompt_set,
-                         cfg.scorer.calibration, cfg.scorer.device)
+                         cfg.scorer.calibration, cfg.scorer.device, cfg.scorer.contrast)
     if cfg.scorer.kind == "cached":
         return CachedScorer(OracleScorer(ground_truth), grid, path=cfg.scorer.cache_path, model_id=cfg.scorer.model or "oracle")
     return OracleScorer(ground_truth)

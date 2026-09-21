@@ -8,6 +8,7 @@ import pytest
 
 from vlm_swarm_coverage.field import Grid
 from vlm_swarm_coverage.models import (
+    BACKGROUND_PHRASES,
     MODEL_IDS,
     DenseImportanceScorer,
     Prompt,
@@ -30,10 +31,13 @@ def _view(x: float = 30.0, y: float = 20.0, z: float = 12.0, yaw: float = 0.0, f
 
 
 def test_prompts_from_mission_and_null_set() -> None:
-    ps = build_prompts(STORM_DAMAGE_MISSION)
+    ps = build_prompts(STORM_DAMAGE_MISSION, contrast=False)
     assert [p.phrase for p in ps] == ["washed-out or cracked road surface", "debris blocking the road", "a stranded or abandoned vehicle"]
     assert [p.weight for p in ps] == [1.0, 0.8, 0.9]
-    assert build_prompts(STORM_DAMAGE_MISSION, "null") == [Prompt("something important", 1.0)]
+    assert build_prompts(STORM_DAMAGE_MISSION, "null", contrast=False) == [Prompt("something important", 1.0)]
+    with_bg = build_prompts(STORM_DAMAGE_MISSION)
+    assert len(with_bg) == 3 + len(BACKGROUND_PHRASES) and sum(p.is_target for p in with_bg) == 3
+    assert build_prompts(STORM_DAMAGE_MISSION, "null")[0].is_target and not build_prompts(STORM_DAMAGE_MISSION, "null")[1].is_target
     assert Mission("t", {"tree": 0.5}).phrase("tree") == "tree" and Mission("t", {"debris": 1.0}).phrase("debris") == "debris"
     with pytest.raises(ValueError, match="prompt_set"):
         build_prompts(STORM_DAMAGE_MISSION, "other")
@@ -78,8 +82,13 @@ def test_map_to_cells_lights_the_right_cell_and_turns_with_yaw() -> None:
 
 
 def test_combine_takes_strongest_weighted_phrase_and_tiles_cover_the_frame() -> None:
-    maps = np.array([[[0.5, 0.1]], [[0.4, 0.9]]])
-    np.testing.assert_allclose(combine(maps, [Prompt("a", 1.0), Prompt("b", 0.5)]), [[0.5, 0.45]])
+    logits = np.array([[[0.0, -2.0]], [[-0.4, 2.0]]])
+    sig = 1 / (1 + np.exp(-logits))
+    np.testing.assert_allclose(combine(logits, [Prompt("a", 1.0), Prompt("b", 0.5)]), np.maximum(sig[0], 0.5 * sig[1]))
+    contrasted = combine(np.array([[[2.0, 0.0]], [[0.0, 0.0]]]), [Prompt("a", 1.0), Prompt("bg", 0.0)])
+    np.testing.assert_allclose(contrasted, [[np.exp(2) / (np.exp(2) + 1), 0.5]])
+    with pytest.raises(ValueError, match="logit maps"):
+        combine(np.zeros((1, 2, 2)), [Prompt("a", 1.0), Prompt("b", 1.0)])
     boxes = tile_boxes(600, 800, 6, 8)
     assert len(boxes) == 48 and boxes[0] == (0, 100, 0, 100) and boxes[-1] == (500, 600, 700, 800)
 
@@ -108,6 +117,6 @@ def test_real_backends_produce_maps(model: str) -> None:
     prompts = build_prompts(STORM_DAMAGE_MISSION)
     a = backend.importance_map(frame, prompts)
     b = backend.importance_map(frame, prompts)
-    assert a.ndim == 2 and a.shape[0] >= 6 and np.isfinite(a).all()
+    assert a.ndim == 2 and a.shape[0] >= 6 and np.isfinite(a).all() and a.min() >= 0.0 and a.max() <= 1.0
     np.testing.assert_allclose(a, b, atol=1e-5)
     assert MODEL_IDS[model][0] in ("clipseg", "tiles", "openclip", "owlv2")
