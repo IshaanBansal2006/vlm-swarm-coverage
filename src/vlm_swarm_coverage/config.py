@@ -172,6 +172,7 @@ class SceneConfig(_Strict):
     seed: int | None = Field(None, ge=0, description="Layout seed for kind='random'.")
     n_targets: int = Field(3, ge=1)
     n_distractors: int = Field(4, ge=0)
+    floor: float | None = Field(None, ge=0, description="Override the mission's background importance per cell.")
 
     @model_validator(mode="after")
     def _random_needs_seed(self) -> SceneConfig:
