@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Protocol
 import numpy as np
 
 if TYPE_CHECKING:
-    from vlm_swarm_coverage.schemas import BeliefMessage, PoseMessage
+    from vlm_swarm_coverage.schemas import AnyBeliefMessage, PoseMessage
 
 @dataclass(frozen=True)
 class Delivery:
@@ -22,11 +22,11 @@ class Delivery:
 
     receiver: int
     t: float
-    message: BeliefMessage | PoseMessage
+    message: AnyBeliefMessage | PoseMessage
 
 
 class Channel(Protocol):
-    def send(self, message: BeliefMessage | PoseMessage, t: float, receivers: list[int]) -> None: ...
+    def send(self, message: AnyBeliefMessage | PoseMessage, t: float, receivers: list[int]) -> None: ...
 
     def deliver(self, t: float) -> list[Delivery]:
         """Everything due at or before `t`, removed from the channel."""
@@ -38,7 +38,7 @@ class PerfectChannel:
         self._pending: list[Delivery] = []
         self.sent_bytes: dict[int, int] = defaultdict(int)
 
-    def send(self, message: BeliefMessage | PoseMessage, t: float, receivers: list[int]) -> None:
+    def send(self, message: AnyBeliefMessage | PoseMessage, t: float, receivers: list[int]) -> None:
         self.sent_bytes[message.sender] += message.nbytes
         for r in receivers:
             self._pending.append(Delivery(r, t, message))
@@ -95,7 +95,7 @@ class FaultedChannel:
         self._budget[sender] = (t, used + nbytes)
         return True
 
-    def send(self, message: BeliefMessage | PoseMessage, t: float, receivers: list[int]) -> None:
+    def send(self, message: AnyBeliefMessage | PoseMessage, t: float, receivers: list[int]) -> None:
         n = message.nbytes
         self.stats["sent"] += len(receivers)
         self.stats["bytes_offered"] += n * len(receivers)

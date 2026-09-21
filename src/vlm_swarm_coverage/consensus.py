@@ -26,12 +26,12 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from vlm_swarm_coverage.field import ImportanceField
-    from vlm_swarm_coverage.schemas import BeliefMessage
+    from vlm_swarm_coverage.schemas import AnyBeliefMessage
 
 
 class BeliefFusion(Protocol):
     def fuse(
-        self, own: ImportanceField, received: Sequence[BeliefMessage], t: float
+        self, own: ImportanceField, received: Sequence[AnyBeliefMessage], t: float
     ) -> ImportanceField:
         """Return the drone's updated belief given its own field and the messages delivered
         since the last sync. May mutate and return `own`, or return a new field on the same grid."""
@@ -42,15 +42,15 @@ class IgnoreMessages:
     """No fusion. The drone's belief is only what it has seen itself."""
 
     def fuse(
-        self, own: ImportanceField, received: Sequence[BeliefMessage], t: float
+        self, own: ImportanceField, received: Sequence[AnyBeliefMessage], t: float
     ) -> ImportanceField:
         return own
 
 
-def latest_per_sender(received: Sequence[BeliefMessage]) -> list[BeliefMessage]:
+def latest_per_sender(received: Sequence[AnyBeliefMessage]) -> list[AnyBeliefMessage]:
     """One message per sender, the highest sequence number. A belief message is a snapshot, so an
     older one delivered late (latency bunches them) adds nothing the newer one does not."""
-    latest: dict[int, BeliefMessage] = {}
+    latest: dict[int, AnyBeliefMessage] = {}
     for m in received:
         cur = latest.get(m.sender)
         if cur is None or m.seq > cur.seq:
@@ -79,7 +79,7 @@ class AgeWeightedAverage:
             return np.where(observed, np.exp(-age / self.tau_s), 0.0)
 
     def fuse(
-        self, own: ImportanceField, received: Sequence[BeliefMessage], t: float
+        self, own: ImportanceField, received: Sequence[AnyBeliefMessage], t: float
     ) -> ImportanceField:
         if own.stamps is None:
             raise ValueError(

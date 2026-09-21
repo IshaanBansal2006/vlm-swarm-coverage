@@ -16,11 +16,12 @@ import numpy as np
 
 from vlm_swarm_coverage.artifacts import RunDir
 from vlm_swarm_coverage.channel import FaultedChannel
+from vlm_swarm_coverage.compress import build_encoder
 from vlm_swarm_coverage.consensus import AgeWeightedAverage, IgnoreMessages
 from vlm_swarm_coverage.control import HoldController, LloydController
 from vlm_swarm_coverage.field import Grid, ImportanceField, rasterize_ground_truth
 from vlm_swarm_coverage.scene import default_scene, random_scene
-from vlm_swarm_coverage.schemas import BeliefMessage, PoseMessage
+from vlm_swarm_coverage.schemas import PoseMessage, encode_ages
 from vlm_swarm_coverage.scoring import (
     CachedScorer,
     OracleScorer,
@@ -38,10 +39,12 @@ if TYPE_CHECKING:
 
     from vlm_swarm_coverage.artifacts import EventLog
     from vlm_swarm_coverage.channel import Channel
+    from vlm_swarm_coverage.compress import BeliefEncoder
     from vlm_swarm_coverage.config import RunConfig
     from vlm_swarm_coverage.consensus import BeliefFusion
     from vlm_swarm_coverage.control import CoverageController
     from vlm_swarm_coverage.scene import Scene
+    from vlm_swarm_coverage.schemas import AnyBeliefMessage
     from vlm_swarm_coverage.scoring import ImportanceScorer
 
 log = logging.getLogger(__name__)
@@ -55,7 +58,7 @@ class Agent:
     belief: ImportanceField
     peers: dict[int, NDArray[np.float64]] = field(default_factory=dict)
     seq: int = 0
-    inbox: list[BeliefMessage] = field(default_factory=list)
+    inbox: list[AnyBeliefMessage] = field(default_factory=list)
 
 
 @dataclass
@@ -69,6 +72,7 @@ class Simulation:
     controller: CoverageController
     channel: Channel
     agents: list[Agent]
+    encoder: BeliefEncoder
     on_step: Callable[[Simulation, float], None] | None = None
 
     def run(self, run_dir: RunDir) -> RunDir:
@@ -105,13 +109,17 @@ class Simulation:
         for agent, d in zip(self.agents, self.world.drones, strict=True):
             others = [a.drone_id for a in self.agents if a is not agent]
             pose = PoseMessage(sender=agent.drone_id, seq=agent.seq, t=t, x=float(d.position[0]), y=float(d.position[1]), z=d.z, yaw=d.yaw)
-            belief = BeliefMessage.from_field(agent.drone_id, agent.seq, t, agent.belief)
+            belief = self.encoder.encode(agent.drone_id, agent.seq, t, agent.belief)
             self.channel.send(pose, t, others)
-            self.channel.send(belief, t, others)
+            belief_bytes = 0
+            if belief is not None:
+                self.channel.send(belief, t, others)
+                belief_bytes = belief.nbytes
             agent.seq += 1
-            ev.write("send", t, drone=agent.drone_id, seq=agent.seq - 1, bytes=pose.nbytes + belief.nbytes, receivers=len(others))
+            ev.write("send", t, drone=agent.drone_id, seq=agent.seq - 1, bytes=pose.nbytes + belief_bytes,
+                     belief_bytes=belief_bytes, receivers=len(others))
             ev.write("belief", t, drone=agent.drone_id, values=agent.belief.values.ravel().round(4).tolist(),
-                     ages=list(belief.ages))
+                     ages=[int(a) for a in encode_ages(agent.belief.stamps, t, self.grid.shape).ravel()])
 
     def _receive(self, t: float, ev: EventLog) -> None:
         by_agent = {a.drone_id: a for a in self.agents}
@@ -209,6 +217,7 @@ def build(
         controller=build_controller(cfg),
         channel=channel or build_channel(cfg),
         agents=agents,
+        encoder=build_encoder(cfg.message),
         on_step=on_step,
     )
 
