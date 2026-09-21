@@ -120,3 +120,15 @@ def test_one_at_a_time_crosses_layouts_but_not_factors(tmp_path: Path) -> None:
     assert len(cells) == 2 * (1 + 3)
     assert all("scene.seed" in c.overrides for c in cells)
     assert sum("channel.drop_rate" in c.overrides and "channel.latency_s" in c.overrides for c in cells) == 0
+
+
+def test_resume_hash_covers_hook_params_and_path_contents(tmp_path: Path) -> None:
+    cfg = RunConfig(name="x")
+    assert config_hash(cfg) == config_hash(cfg, {})
+    assert config_hash(cfg, {"error": {"sigma": 0.1}}) != config_hash(cfg, {"error": {"sigma": 0.2}})
+    f = tmp_path / "m.json"
+    f.write_text("{}")
+    a = config_hash(cfg, {"error": {"path": str(f), "scale": 1.0}})
+    f.write_text('{"sigma": 1}')
+    b = config_hash(cfg, {"error": {"path": str(f), "scale": 1.0}})
+    assert a != b

@@ -145,8 +145,24 @@ def apply_overrides(cfg: RunConfig, overrides: dict[str, Any], name: str | None 
     return RunConfig.model_validate(data)
 
 
-def config_hash(cfg: RunConfig) -> str:
-    return hashlib.sha256(json.dumps(cfg.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()[:12]
+def _param_digest(value: Any) -> Any:
+    """Hook parameters as they matter for resume: a dict with a `path` is hashed by the file's
+    content, so a re-fitted model on disk re-runs the cells that used it."""
+    if isinstance(value, dict):
+        out = {k: _param_digest(v) for k, v in value.items()}
+        if "path" in value and isinstance(value["path"], str):
+            p = Path(value["path"])
+            out["path_sha256"] = hashlib.sha256(p.read_bytes()).hexdigest()[:12] if p.exists() else "missing"
+        return out
+    if isinstance(value, list):
+        return [_param_digest(v) for v in value]
+    return value
+
+
+def config_hash(cfg: RunConfig, params: dict[str, Any] | None = None) -> str:
+    """The identity of a run for resume: its full config and, when given, its hook parameters."""
+    payload = {"config": cfg.model_dump(mode="json"), "params": _param_digest(params or {})}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 def _import(spec: str) -> Any:
@@ -160,7 +176,7 @@ def run_cell(cfg_json: str, out_root: str, cell: Cell, hook: str | None, post_ru
     """One run, in a worker process. Never raises: a failure is a row with status 'error'."""
     cfg = RunConfig.model_validate_json(cfg_json)
     row: dict[str, Any] = {"cell_id": cell.cell_id, "overrides": cell.overrides, "params": cell.params,
-                           "config_hash": config_hash(cfg), "seed": cfg.sim.seed}
+                           "config_hash": config_hash(cfg, cell.params), "seed": cfg.sim.seed}
     t0 = time.perf_counter()
     try:
         kwargs = _import(hook)(cfg, cell.params) if hook else {}
@@ -193,7 +209,7 @@ def run_sweep(spec: SweepSpec, out_root: Path | str, dry_run: bool = False) -> l
     todo: list[tuple[str, Cell]] = []
     for cell in cells:
         cfg = apply_overrides(base, cell.overrides, name=f"{spec.name}-{cell.cell_id}")
-        if config_hash(cfg) in done:
+        if config_hash(cfg, cell.params) in done:
             continue
         todo.append((cfg.model_dump_json(), cell))
     log.info("sweep %s: %d cells, %d already done, %d to run, %d workers", spec.name, len(cells), len(cells) - len(todo), len(todo), spec.workers)
