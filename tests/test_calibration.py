@@ -117,3 +117,37 @@ def test_frames_round_trip_through_manifest_and_score_store(tmp_path) -> None:  
     assert n_oracle == 2 and len(list(load_records(tmp_path / "store.jsonl"))) == 4
     with pytest.raises(FileNotFoundError, match="manifest"):
         load_manifest(tmp_path / "sweep")
+
+
+def test_cache_views_and_store_to_cache_round_trip(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from vlm_swarm_coverage.calibration import (
+        cache_views,
+        load_records,
+        main,
+        store_to_cache,
+        views_to_json,
+    )
+    from vlm_swarm_coverage.field import Grid
+    from vlm_swarm_coverage.scoring import CachedScorer, OracleScorer, View
+
+    g = Grid(8.0, 4.0, 2.0)  # 2 x 4 cells
+    scene = default_scene()
+    gt = rasterize_ground_truth(scene, Grid(60.0, 40.0, 2.0))
+    views = cache_views(g, [12.0, 16.0], 70.0, 4 / 3, "m")
+    assert len(views) == 16 and views[0][0] == "cache" and views[8][1].z == 16.0
+    assert views_to_json(views, tmp_path / "v.json") == 16
+    small_gt = ImportanceField(g, gt.values[:2, :4])
+    record_sweep(OracleScorer(small_gt), (v for _, v in views), tmp_path / "s.jsonl", "oracle", tag="cache")
+    record_sweep(OracleScorer(small_gt), [View(0, 99.0, 1.0, 1.0, 12.0, 0.0, 70.0)], tmp_path / "s.jsonl", "oracle", tag="other")
+    assert sum(r.tag == "cache" for r in load_records(tmp_path / "s.jsonl")) == 16
+    n = store_to_cache(tmp_path / "s.jsonl", g, tmp_path / "cache.json", "oracle", altitude_step=2.0)
+    assert n == 16
+    cached = CachedScorer(OracleScorer(small_gt), g, path=tmp_path / "cache.json", model_id="oracle")
+    obs = cached.score(View(0, 0.0, 1.0, 1.0, 12.0, 0.7, 70.0))
+    assert cached.hits == 1 and cached.misses == 0 and len(obs.cells) > 0
+    with pytest.raises(ValueError, match="cache views"):
+        store_to_cache(tmp_path / "s.jsonl", g, tmp_path / "c2.json", "oracle", tag="nope")
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('name = "x"\n[area]\nwidth = 8.0\nheight = 4.0\ncell_size = 2.0\n')
+    assert main(["cache-views", str(cfg), "--out", str(tmp_path / "cv.json"), "--altitudes", "12", "16"]) == 0
+    assert main(["cache", str(tmp_path / "s.jsonl"), str(cfg), "--out", str(tmp_path / "c3.json"), "--model-id", "oracle"]) == 0
