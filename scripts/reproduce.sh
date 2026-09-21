@@ -11,13 +11,13 @@
 #   bash scripts/reproduce.sh analyse STAGES       # fits and figures from a study's stage rows (private layer)
 #   bash scripts/reproduce.sh all                  # everything above in order (Isaac steps need Windows)
 #
-# Environment: VSC_OUT (default: ./artifacts), VSC_WIN_TMP (Windows temp dir seen from WSL),
+# Environment: VSC_OUT (default: ./runs/study, ignored by git), VSC_WIN_TMP (Windows temp dir seen from WSL),
 # VSC_TEXTURES_WIN (Windows-side texture dir), VSC_MODELS (default: clipseg).
 # The private layer (`vlm_swarm_coverage.held`) holds the study's protocol, faults, metrics and
 # analysis; stages that need it say so and exit 2 when it is absent.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="${VSC_OUT:-$HERE/artifacts}"
+OUT="${VSC_OUT:-$HERE/runs/study}"
 WIN_TMP="${VSC_WIN_TMP:-/mnt/c/Users/ishaa/AppData/Local/Temp/vsc}"
 WIN_TMP_W="$(wslpath -w "$WIN_TMP" 2>/dev/null || echo "$WIN_TMP")"
 TEX_W="${VSC_TEXTURES_WIN:-C:\\Users\\ishaa\\AppData\\Local\\vsc\\textures}"
