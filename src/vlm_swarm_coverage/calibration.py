@@ -29,6 +29,7 @@ from vlm_swarm_coverage.scoring import Observation, View
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
 
+    from vlm_swarm_coverage.field import Grid
     from vlm_swarm_coverage.scoring import ImportanceScorer
 
 log = logging.getLogger(__name__)
@@ -183,6 +184,50 @@ def score_frames(scorer: ImportanceScorer, frames: Path, store: Path, model_id: 
         return rec.count
 
 
+# --- Cache fill ---------------------------------------------------------------------------------
+
+
+def cache_views(grid: Grid, altitudes: Sequence[float], fov_deg: float, aspect: float, mission_text: str, tag: str = "cache") -> list[tuple[str, View]]:
+    """One view per cache bucket: every cell centre at every altitude, yaw 0 (decision 012 ignores
+    yaw). Rendered once and scored per model, these fill a `CachedScorer` file for a scene."""
+    centres = grid.cell_centers()
+    views: list[tuple[str, View]] = []
+    k = 0
+    for z in altitudes:
+        for row in range(grid.rows):
+            for col in range(grid.cols):
+                x, y = (float(v) for v in centres[row, col])
+                views.append((tag, View(0, float(k), x, y, float(z), 0.0, fov_deg, aspect, None, mission_text)))
+                k += 1
+    return views
+
+
+def store_to_cache(store: Path, grid: Grid, out: Path, model_id: str, altitude_step: float = 2.0, tag: str = "cache") -> int:
+    """Records tagged `tag` in a score store -> a `CachedScorer` cache file keyed by pose bucket.
+    Two records in one bucket keep the first; the count of buckets written is returned."""
+    from vlm_swarm_coverage.scoring import CachedScorer
+
+    class _Never:
+        def score(self, view: View) -> Observation:
+            raise RuntimeError("a cache built from a store must not score; bucket missing for this view")
+
+    cache = CachedScorer(_Never(), grid, path=None, altitude_step=altitude_step, model_id=model_id)
+    n = 0
+    for r in load_records(store):
+        if r.tag != tag:
+            continue
+        key = cache.key(r.view)
+        if key in cache._store:
+            continue
+        cache._store[key] = (r.obs.cells, r.obs.values)
+        n += 1
+    if n == 0:
+        raise ValueError(f"{store} holds no records tagged {tag!r}; score the cache views first")
+    cache.path = out
+    cache.save()
+    return n
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -191,27 +236,47 @@ def main(argv: list[str] | None = None) -> int:
     from vlm_swarm_coverage.scoring import OracleScorer, VLMScorer
     from vlm_swarm_coverage.simulation import build_scene
 
-    parser = argparse.ArgumentParser(prog="vsc-score-frames", description="Score rendered frames into a score store.")
-    parser.add_argument("frames", type=Path, help="Manifest file or the directory holding it")
-    parser.add_argument("config", type=Path, help="Run config defining the scene and grid the frames were rendered on")
-    parser.add_argument("--model", required=True, help="'oracle' or a model id from models.MODEL_IDS")
-    parser.add_argument("--out", type=Path, required=True, help="Score store (JSONL) to append to")
-    parser.add_argument("--prompt-set", default="mission", choices=["mission", "null"])
-    parser.add_argument("--calibration", type=Path, default=None)
-    parser.add_argument("--device", default=None)
+    parser = argparse.ArgumentParser(prog="vsc-calibration", description="Frames, stores and caches.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sc = sub.add_parser("score", help="Score rendered frames into a score store.")
+    sc.add_argument("frames", type=Path, help="Manifest file or the directory holding it")
+    sc.add_argument("config", type=Path, help="Run config defining the scene and grid the frames were rendered on")
+    sc.add_argument("--model", required=True, help="'oracle' or a model id from models.MODEL_IDS")
+    sc.add_argument("--out", type=Path, required=True, help="Score store (JSONL) to append to")
+    sc.add_argument("--prompt-set", default="mission", choices=["mission", "null"])
+    sc.add_argument("--calibration", type=Path, default=None)
+    sc.add_argument("--device", default=None)
+    cv = sub.add_parser("cache-views", help="Write the renderer's view list for a cache fill.")
+    cv.add_argument("config", type=Path)
+    cv.add_argument("--out", type=Path, required=True)
+    cv.add_argument("--altitudes", type=float, nargs="+", default=None, help="Default: the config altitude")
+    ca = sub.add_parser("cache", help="Turn a score store's cache-tagged records into a CachedScorer file.")
+    ca.add_argument("store", type=Path)
+    ca.add_argument("config", type=Path)
+    ca.add_argument("--out", type=Path, required=True)
+    ca.add_argument("--model-id", required=True)
+    ca.add_argument("--altitude-step", type=float, default=2.0)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = RunConfig.load(args.config)
     scene = build_scene(cfg)
     grid = Grid(cfg.area.width, cfg.area.height, cfg.area.cell_size)
-    if args.model == "oracle":
-        scorer: ImportanceScorer = OracleScorer(rasterize_ground_truth(scene, grid))
-        model_id = "oracle"
+    if args.command == "score":
+        if args.model == "oracle":
+            scorer: ImportanceScorer = OracleScorer(rasterize_ground_truth(scene, grid))
+            model_id = "oracle"
+        else:
+            scorer = VLMScorer(args.model, grid, scene.mission, args.prompt_set, args.calibration, args.device)
+            model_id = f"{args.model}:{args.prompt_set}"
+        n = score_frames(scorer, args.frames, args.out, model_id, scene.mission.text)
+        print(f"{n} records -> {args.out}")
+    elif args.command == "cache-views":
+        alts = args.altitudes or [cfg.swarm.altitude]
+        n = views_to_json(cache_views(grid, alts, cfg.swarm.camera_fov_deg, cfg.swarm.camera_aspect, scene.mission.text), args.out)
+        print(f"{n} cache views -> {args.out}")
     else:
-        scorer = VLMScorer(args.model, grid, scene.mission, args.prompt_set, args.calibration, args.device)
-        model_id = f"{args.model}:{args.prompt_set}"
-    n = score_frames(scorer, args.frames, args.out, model_id, scene.mission.text)
-    print(f"{n} records -> {args.out}")
+        n = store_to_cache(args.store, grid, args.out, args.model_id, args.altitude_step)
+        print(f"{n} buckets -> {args.out}")
     return 0
 
 
