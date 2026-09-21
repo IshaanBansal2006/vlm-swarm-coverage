@@ -90,6 +90,7 @@ class ScorerConfig(_Strict):
     model: str | None = Field(None, description="Model identifier for kind='vlm'.")
     cache_path: Path | None = Field(None, description="Importance cache for kind='cached'.")
     prompt_set: Literal["mission", "null"] = Field("mission", description="Mission phrases, or one generic phrase.")
+    contrast: bool = Field(True, description="Score phrases by softmax against background phrases (decision 016).")
     calibration: Path | None = Field(None, description="Affine score calibration JSON for kind='vlm'.")
     device: str | None = Field(None, description="torch device for kind='vlm'; default picks CUDA if present.")
 

@@ -244,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--model", required=True, help="'oracle' or a model id from models.MODEL_IDS")
     sc.add_argument("--out", type=Path, required=True, help="Score store (JSONL) to append to")
     sc.add_argument("--prompt-set", default="mission", choices=["mission", "null"])
+    sc.add_argument("--no-contrast", action="store_true", help="Score each phrase alone instead of against background phrases")
     sc.add_argument("--calibration", type=Path, default=None)
     sc.add_argument("--device", default=None)
     cv = sub.add_parser("cache-views", help="Write the renderer's view list for a cache fill.")
@@ -266,8 +267,8 @@ def main(argv: list[str] | None = None) -> int:
             scorer: ImportanceScorer = OracleScorer(rasterize_ground_truth(scene, grid))
             model_id = "oracle"
         else:
-            scorer = VLMScorer(args.model, grid, scene.mission, args.prompt_set, args.calibration, args.device)
-            model_id = f"{args.model}:{args.prompt_set}"
+            scorer = VLMScorer(args.model, grid, scene.mission, args.prompt_set, args.calibration, args.device, not args.no_contrast)
+            model_id = f"{args.model}:{args.prompt_set}{'' if not args.no_contrast else ':raw'}"
         n = score_frames(scorer, args.frames, args.out, model_id, scene.mission.text)
         print(f"{n} records -> {args.out}")
     elif args.command == "cache-views":

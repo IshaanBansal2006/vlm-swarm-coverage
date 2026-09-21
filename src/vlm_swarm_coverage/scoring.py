@@ -112,7 +112,7 @@ class VLMScorer:
 
     def __init__(
         self, model: str, grid: Grid, mission: Mission, prompt_set: str = "mission",
-        calibration: Path | None = None, device: str | None = None,
+        calibration: Path | None = None, device: str | None = None, contrast: bool = True,
     ) -> None:
         try:
             import torch  # noqa: F401
@@ -126,7 +126,7 @@ class VLMScorer:
         self.model = model
         self.grid = grid
         cal = ScoreCalibration.load(calibration) if calibration else ScoreCalibration(floor=mission.floor)
-        self._impl = load_scorer(model, grid, mission, prompt_set, cal, device)
+        self._impl = load_scorer(model, grid, mission, prompt_set, cal, device, contrast)
 
     def score(self, view: View) -> Observation:
         return self._impl.score(view)
