@@ -71,3 +71,49 @@ def test_pre_014_cache_is_rejected_with_advice(tmp_path: Path) -> None:
     g = Grid(4.0, 4.0, 2.0)
     with pytest.raises(ValueError, match="re-score"):
         CachedScorer(OracleScorer(ImportanceField.uniform(g, 0.1)), g, path=path)
+
+
+def test_frames_round_trip_through_manifest_and_score_store(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    from PIL import Image
+
+    from vlm_swarm_coverage.calibration import (
+        FrameRecord,
+        frame_view,
+        load_manifest,
+        load_records,
+        score_frames,
+        views_to_json,
+    )
+    from vlm_swarm_coverage.field import Grid, ImportanceField
+    from vlm_swarm_coverage.scoring import Observation, OracleScorer, View, footprint_cells
+
+    views = [("repeat", View(3, 1.0, 10.0, 8.0, 12.0, 0.3, 70.0, 4 / 3, None, "m")), ("yaw", View(0, 2.0, 5.0, 5.0, 8.0, 1.0, 70.0, 4 / 3, None, "m"))]
+    assert views_to_json(views, tmp_path / "views.json") == 2
+    rows = json.loads((tmp_path / "views.json").read_text())
+    assert rows[0] == {"tag": "repeat", "drone": 3, "t": 1.0, "x": 10.0, "y": 8.0, "z": 12.0, "yaw": 0.3}
+    (tmp_path / "sweep").mkdir()
+    lines = []
+    for k, row in enumerate(rows):
+        Image.fromarray(np.full((30, 40, 3), (k * 100, 20, 20), dtype=np.uint8)).save(tmp_path / "sweep" / f"{k}.png")
+        lines.append(json.dumps({**row, "file": f"sweep/{k}.png", "fov_deg": 70.0, "aspect": 4 / 3, "width": 40, "height": 30}))
+    (tmp_path / "manifest.jsonl").write_text("\n".join(lines) + "\n")
+    manifest = load_manifest(tmp_path)
+    assert len(manifest) == 2 and manifest[0] == FrameRecord("repeat", 3, 1.0, 10.0, 8.0, 12.0, 0.3, 70.0, 4 / 3, "sweep/0.png")
+    v = frame_view(manifest[1], tmp_path, "mission")
+    assert v.frame is not None and v.frame.shape == (30, 40, 3) and v.frame[0, 0, 0] == 100 and v.mission_text == "mission"
+
+    class MeanRed:
+        def score(self, view: View) -> Observation:
+            cells = footprint_cells(g, view.x, view.y, view.z, view.yaw, view.fov_deg, view.aspect)
+            return Observation(view.drone_id, view.t, cells, np.full(len(cells), float(view.frame[..., 0].mean()) / 255.0))
+
+    g = Grid(20.0, 20.0, 2.0)
+    n = score_frames(MeanRed(), tmp_path, tmp_path / "store.jsonl", "meanred", "mission")
+    records = list(load_records(tmp_path / "store.jsonl"))
+    assert n == 2 and [r.tag for r in records] == ["repeat", "yaw"] and records[1].obs.values[0] == pytest.approx(100 / 255, abs=1e-5)
+    n_oracle = score_frames(OracleScorer(ImportanceField.uniform(g, 0.2)), tmp_path / "manifest.jsonl", tmp_path / "store.jsonl", "oracle", "m")
+    assert n_oracle == 2 and len(list(load_records(tmp_path / "store.jsonl"))) == 4
+    with pytest.raises(FileNotFoundError, match="manifest"):
+        load_manifest(tmp_path / "sweep")

@@ -28,9 +28,10 @@ Three drones start at the west edge, score what is under them with the oracle, a
 descent spreads them along the corridor. The video shows each drone's belief filling in beside
 the answer key, with camera footprints, tracks and the Voronoi partition drawn from the log.
 
-The Isaac scene and the bridge are written against the predecessor's proven capture loop but have
-not yet been run live at this commit. Drones now fuse received beliefs by an age-weighted per-cell
-average (decision 022). No experiments have run yet.
+The Isaac scene and the bridge have run live: the scene launches headless from WSL, the loop drives
+it over ROS 2, and observations come back. The nadir camera's orientation is verified from dumped
+frames, and a pose-sweep mode renders frames for any list of poses (decision 063). Drones fuse
+received beliefs by an age-weighted per-cell average (decision 022). No experiments have run yet.
 
 Four model backends (CLIPSeg, SigLIP 2, RemoteCLIP, OWLv2) sit behind the scorer interface and score
 synthetic frames deterministically on a laptop GPU; none has yet been run on a rendered frame or
@@ -43,7 +44,7 @@ the model-stability study.
 
 | | |
 |---|---|
-| `sim/` | The Isaac Sim scene (`scenes/coverage_scene.py`) and the Windows-side launcher |
+| `sim/` | The Isaac Sim scene (`scenes/coverage_scene.py`): follows the loop's poses, scores or records nadir frames, or renders a pose sweep; and the Windows-side launcher |
 | `config/` | DDS transport profile for the simulator ↔ WSL boundary |
 | `scripts/` | `demo.sh` (run + render), environment setup, a bridge verification check, the Isaac-capture footage builder |
 | `configs/` | Run configurations: `demo.toml` (three drones, the rendered walkthrough) and `study.toml` (five drones, the baseline sweeps derive from) |
@@ -70,7 +71,7 @@ Inside the rig so far:
 | `__main__.py` | `vsc-run configs/demo.toml --out runs` |
 | `bridge.py` | WSL side of the simulator bridge: poses out, observations in, wall-clock pacing. Decision 060. |
 | `render.py` | `python3 -m vlm_swarm_coverage.render configs/demo.toml` under the ROS interpreter, with Isaac running `sim/scenes/coverage_scene.py`. |
-| `calibration.py` | Raw per-view score store and a fixed-order pose sweep, so a model-stability protocol reruns unchanged on any scorer. Decision 014. |
+| `calibration.py` | Raw per-view score store, a fixed-order pose sweep, and the frame side: views to JSON for the renderer, frames and manifest back to views, `python -m vlm_swarm_coverage.calibration FRAMES CONFIG --model ...` to score them. Decisions 014, 063. |
 | `sweep.py` | `python -m vlm_swarm_coverage.sweep sweep.toml --out sweeps`: expands axes over a base config into runs, executes them in parallel, indexes them, resumes by config hash. Decision 062. |
 | `viz.py` | `python -m vlm_swarm_coverage.viz runs/<run> --video out.mp4 --summary out.png`: the belief heatmap over time beside the answer key, footprints, tracks and the Voronoi partition, all from the log. Decision 061. |
 
