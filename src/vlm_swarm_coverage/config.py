@@ -125,8 +125,42 @@ class FusionConfig(_Strict):
 
 
 class ControllerConfig(_Strict):
-    kind: Literal["lloyd", "hold"] = "lloyd"
+    kind: Literal["lloyd", "hold", "replay"] = "lloyd"
     gain: float = Field(1.0, gt=0, description="Proportional gain toward the cell centroid.")
+    replay_run: Path | None = Field(None, description="Run directory whose trajectory kind='replay' follows.")
+
+    @model_validator(mode="after")
+    def _replay_needs_a_run(self) -> ControllerConfig:
+        if self.kind == "replay" and self.replay_run is None:
+            raise ValueError("controller.kind='replay' needs controller.replay_run (a run directory)")
+        if self.kind != "replay" and self.replay_run is not None:
+            raise ValueError("controller.replay_run only applies to kind='replay'")
+        return self
+
+
+class PriorConfig(_Strict):
+    """What every drone believes before its first observation (decision 023).
+
+    `floor` is the mission floor everywhere. `truth` is the answer key. `shifted_truth` is the
+    answer key displaced by `shift_m` (metres, x then y), floor where it leaves the area.
+    `other_scene` is the answer key of a different random layout, `scene_seed`. With
+    `observed_at` unset the prior is held but never transmitted (cells start unobserved); set to
+    a time, it is stamped as an observation made then and shared like any other."""
+
+    kind: Literal["floor", "truth", "shifted_truth", "other_scene"] = "floor"
+    shift_m: tuple[float, float] = (0.0, 0.0)
+    scene_seed: int | None = Field(None, ge=0)
+    observed_at: float | None = None
+
+    @model_validator(mode="after")
+    def _kind_has_what_it_needs(self) -> PriorConfig:
+        if self.kind == "other_scene" and self.scene_seed is None:
+            raise ValueError("prior.kind='other_scene' needs prior.scene_seed")
+        if self.kind != "shifted_truth" and self.shift_m != (0.0, 0.0):
+            raise ValueError("prior.shift_m only applies to kind='shifted_truth'")
+        if self.kind != "other_scene" and self.scene_seed is not None:
+            raise ValueError("prior.scene_seed only applies to kind='other_scene'")
+        return self
 
 
 class SceneConfig(_Strict):
@@ -152,6 +186,7 @@ class RunConfig(_Strict):
     message: MessageConfig = MessageConfig()
     fusion: FusionConfig = FusionConfig()
     controller: ControllerConfig = ControllerConfig()
+    prior: PriorConfig = PriorConfig()
     scene: SceneConfig = SceneConfig()
 
     @classmethod
