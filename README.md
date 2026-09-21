@@ -46,7 +46,7 @@ the model-stability study.
 |---|---|
 | `sim/` | The Isaac Sim scene (`scenes/coverage_scene.py`): follows the loop's poses, scores or records nadir frames, or renders a pose sweep; and the Windows-side launcher |
 | `config/` | DDS transport profile for the simulator ↔ WSL boundary |
-| `scripts/` | `demo.sh` (run + render), environment setup, a bridge verification check, the Isaac-capture footage builder, `fetch-textures.sh` (CC0 surface textures for the scene) |
+| `scripts/` | `demo.sh` (run + render), `reproduce.sh` (the study stage by stage: render, score, cache, calibrate, sweeps, analyse), environment setup, a bridge verification check, the Isaac-capture footage builder, `fetch-textures.sh` (CC0 surface textures for the scene) |
 | `configs/` | Run configurations: `demo.toml` (three drones, the rendered walkthrough) and `study.toml` (five drones, the baseline sweeps derive from) |
 | `src/vlm_swarm_coverage/` | The rig |
 | `docs/decisions/` | Decision records — context, options, choice, consequences |
