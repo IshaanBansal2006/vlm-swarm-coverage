@@ -91,3 +91,19 @@ def test_scorer_wrap_is_applied(tmp_path: Path) -> None:
 
     build(_short(), scorer_wrap=wrap)
     assert seen == ["OracleScorer"]
+
+
+def test_fusion_brings_beliefs_closer_than_no_fusion(tmp_path: Path) -> None:
+    def spread(kind: str) -> float:
+        sim = build(_short(fusion={"kind": kind}))
+        sim.run(__import__("vlm_swarm_coverage.artifacts").artifacts.RunDir.create(tmp_path / kind, sim.config))
+        a, b = sim.agents[0].belief.values, sim.agents[1].belief.values
+        return float(np.abs(a - b).sum())
+
+    assert spread("age_weighted") < 0.5 * spread("none")
+
+
+def test_belief_events_carry_ages(tmp_path: Path) -> None:
+    run = run_from_config(_short(), tmp_path)
+    last = list(run.iter_events("belief"))[-1]
+    assert len(last["ages"]) == len(last["values"]) and min(last["ages"]) == 0

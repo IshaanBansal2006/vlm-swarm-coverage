@@ -29,8 +29,8 @@ descent spreads them along the corridor. The video shows each drone's belief fil
 the answer key, with camera footprints, tracks and the Voronoi partition drawn from the log.
 
 The Isaac scene and the bridge are written against the predecessor's proven capture loop but have
-not yet been run live at this commit. No fusion rule exists yet: each drone's belief is only what
-it has seen. No experiments have run yet.
+not yet been run live at this commit. Drones now fuse received beliefs by an age-weighted per-cell
+average (decision 022). No experiments have run yet.
 
 The near-term milestones are the first live rendered run and the model behind the scorer interface.
 
@@ -55,8 +55,8 @@ Inside the rig so far:
 | `config.py` | One typed, validated `RunConfig` that fully determines a run. TOML in, JSON snapshot out. Unknown keys are errors. |
 | `artifacts.py` | A directory per run: config snapshot, provenance (package version, git sha), and an append-only JSONL event log that every metric is computed from offline. |
 | `field.py` | The importance grid over the area and the values on it, plus the ground-truth rasteriser that turns the scene's mission weights into the answer key. |
-| `schemas.py` | Typed inter-drone messages (pose, belief) with a fixed binary wire format, so every message knows its own byte size. Decision 030. |
-| `consensus.py` | The belief-fusion interface. Only the no-fusion endpoint exists so far. |
+| `schemas.py` | Typed inter-drone messages (pose, belief) with a fixed binary wire format, so every message knows its own byte size. The belief message carries a per-cell observation age. Decisions 030, 032. |
+| `consensus.py` | Belief fusion: the no-communication endpoint, and the age-weighted per-cell average that lets drones converge where they exchange messages and disagree where they do not. Decision 022. |
 | `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache keyed to one scorer. Decisions 010–014. |
 | `world.py` | First-order drone kinematics at fixed altitude. Decision 021. |
 | `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized. Decision 020. |

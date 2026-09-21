@@ -29,6 +29,10 @@ sync_interval_s = 1.0
 kind = "oracle"
 period_s = 1.0
 
+[fusion]
+kind = "age_weighted"
+tau_s = 10.0
+
 [controller]
 kind = "lloyd"
 gain = 1.0

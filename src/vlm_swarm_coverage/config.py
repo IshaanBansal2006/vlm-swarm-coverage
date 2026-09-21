@@ -36,9 +36,12 @@ def _toml_loader():  # type: ignore[no-untyped-def]
 
 
 class _Strict(BaseModel):
-    """Reject unknown keys so a typo in a config file fails loudly instead of silently defaulting."""
+    """Reject unknown keys so a typo in a config file fails loudly instead of silently defaulting.
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    Infinite floats serialise as the JSON constant `Infinity` so a config with `tau_s = inf`
+    survives the snapshot round trip instead of becoming `null`."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, ser_json_inf_nan="constants")
 
 
 class AreaConfig(_Strict):
@@ -96,6 +99,16 @@ class ScorerConfig(_Strict):
         return self
 
 
+class FusionConfig(_Strict):
+    """How a drone folds received beliefs into its own (decision 022)."""
+
+    kind: Literal["none", "age_weighted"] = "age_weighted"
+    tau_s: float = Field(
+        10.0, ge=0,
+        description="Staleness time constant, seconds. 0 = freshest observation wins; inf = equal weights.",
+    )
+
+
 class ControllerConfig(_Strict):
     kind: Literal["lloyd", "hold"] = "lloyd"
     gain: float = Field(1.0, gt=0, description="Proportional gain toward the cell centroid.")
@@ -121,6 +134,7 @@ class RunConfig(_Strict):
     sim: SimConfig = SimConfig()
     channel: ChannelConfig = ChannelConfig()
     scorer: ScorerConfig = ScorerConfig()
+    fusion: FusionConfig = FusionConfig()
     controller: ControllerConfig = ControllerConfig()
     scene: SceneConfig = SceneConfig()
 
