@@ -55,7 +55,7 @@ Inside the rig so far:
 
 | Module | Role |
 |---|---|
-| `scene.py` | The world: survey area, road, mission, features with labels and footprints, drone start poses. Pure dataclasses so the simulator's Python can import it by path. Fixed demo layout plus a seeded generator for sweeps. |
+| `scene.py` | The world: survey area, road, mission, features with labels and footprints, drone start poses. Pure dataclasses so the simulator's Python can import it by path. Fixed demo layout plus a seeded generator for sweeps whose road offset moves per seed (decision 066). |
 | `config.py` | One typed, validated `RunConfig` that fully determines a run, including the message encoder, the fusion rule, the controller and the drones' initial belief. TOML in, JSON snapshot out. Unknown keys are errors. |
 | `artifacts.py` | A directory per run: config snapshot, provenance (package version, git sha), and an append-only JSONL event log that every metric is computed from offline. |
 | `field.py` | The importance grid over the area and the values on it, plus the ground-truth rasteriser that turns the scene's mission weights into the answer key. |
