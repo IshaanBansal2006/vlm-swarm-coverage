@@ -159,10 +159,11 @@ def build_scene(cfg: RunConfig) -> Scene:
     return default_scene(cfg.swarm.n_drones, cfg.swarm.altitude)
 
 
-def build_scorer(cfg: RunConfig, grid: Grid, ground_truth: ImportanceField) -> ImportanceScorer:
+def build_scorer(cfg: RunConfig, grid: Grid, ground_truth: ImportanceField, scene: Scene) -> ImportanceScorer:
     if cfg.scorer.kind == "vlm":
         assert cfg.scorer.model is not None
-        return VLMScorer(cfg.scorer.model, grid)
+        return VLMScorer(cfg.scorer.model, grid, scene.mission, cfg.scorer.prompt_set,
+                         cfg.scorer.calibration, cfg.scorer.device)
     if cfg.scorer.kind == "cached":
         return CachedScorer(OracleScorer(ground_truth), grid, path=cfg.scorer.cache_path, model_id=cfg.scorer.model or "oracle")
     return OracleScorer(ground_truth)
@@ -243,7 +244,7 @@ def build(
     world = KinematicWorld(scene.drone_starts, scene.width, scene.height, cfg.swarm.max_speed, cfg.sim.dt)
     prior = build_prior(cfg, scene, grid, ground_truth)
     agents = [Agent(i, prior.copy()) for i in range(cfg.swarm.n_drones)]
-    scorer = scorer or build_scorer(cfg, grid, ground_truth)
+    scorer = scorer or build_scorer(cfg, grid, ground_truth, scene)
     if scorer_wrap is not None:
         scorer = scorer_wrap(scorer)
     return Simulation(
