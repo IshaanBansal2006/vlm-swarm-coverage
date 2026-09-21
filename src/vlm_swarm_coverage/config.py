@@ -99,6 +99,21 @@ class ScorerConfig(_Strict):
         return self
 
 
+class MessageConfig(_Strict):
+    """What a drone puts on the wire each sync besides its pose (decision 033)."""
+
+    kind: Literal["dense", "topk", "quantised", "none"] = "dense"
+    k: int | None = Field(None, ge=0, description="Cells per message for kind='topk'.")
+
+    @model_validator(mode="after")
+    def _topk_needs_k(self) -> MessageConfig:
+        if self.kind == "topk" and self.k is None:
+            raise ValueError("message.kind='topk' needs message.k (cells per message)")
+        if self.kind != "topk" and self.k is not None:
+            raise ValueError(f"message.k only applies to kind='topk', not {self.kind!r}")
+        return self
+
+
 class FusionConfig(_Strict):
     """How a drone folds received beliefs into its own (decision 022)."""
 
@@ -134,6 +149,7 @@ class RunConfig(_Strict):
     sim: SimConfig = SimConfig()
     channel: ChannelConfig = ChannelConfig()
     scorer: ScorerConfig = ScorerConfig()
+    message: MessageConfig = MessageConfig()
     fusion: FusionConfig = FusionConfig()
     controller: ControllerConfig = ControllerConfig()
     scene: SceneConfig = SceneConfig()
