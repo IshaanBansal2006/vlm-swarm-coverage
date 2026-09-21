@@ -128,7 +128,8 @@ COLORS = {
     "ground": (0.32, 0.42, 0.22), "road": (0.16, 0.17, 0.19), "damaged_road": (0.45, 0.30, 0.18),
     "debris": (0.55, 0.45, 0.30), "stalled_vehicle": (0.80, 0.12, 0.10), "parked_vehicle": (0.75, 0.77, 0.80),
     "tree": (0.10, 0.35, 0.12), "shed": (0.50, 0.42, 0.35), "drone": (0.96, 0.96, 0.98), "amber": (1.0, 0.62, 0.11),
-    "tyre": (0.06, 0.06, 0.07), "post": (0.45, 0.45, 0.47),
+    "tyre": (0.06, 0.06, 0.07), "post": (0.45, 0.45, 0.47), "glass": (0.12, 0.14, 0.18), "roof_red": (0.62, 0.09, 0.08),
+    "roof_silver": (0.60, 0.62, 0.66),
 }
 _materials = {}
 
@@ -136,8 +137,8 @@ _materials = {}
 # maps fetched by scripts/fetch-textures.sh, tiled at their physical size in metres. Anything
 # not listed keeps its flat colour.
 TEXTURES = {
-    "ground": ("sparse_grass.jpg", 2.0), "road": ("clean_asphalt.jpg", 2.1), "damaged_road": ("road_damaged.jpg", 2.2),
-    "debris": ("aerial_ground_rock.jpg", 4.0), "tree": ("leafy_grass.jpg", 1.5),
+    "ground": ("sparse_grass.jpg", 2.0), "road": ("asphalt_pit_lane.jpg", 2.0), "damaged_road": ("aerial_mud_1.jpg", 8.0),
+    "debris": ("aerial_ground_rock.jpg", 4.0), "tree": ("forrest_ground_01.jpg", 2.5),
 }
 TEXTURE_DIR = None if args.textures == "none" else Path(args.textures or (Path(args.repo) / "sim" / "assets" / "textures"))
 _textured = {}
@@ -221,6 +222,21 @@ def make_car(path, extent, color, position, yaw):
     cab = Cube(paths=f"{path}/cabin", positions=[[-0.08 * L, 0.0, wheel_r + body_h + cab_h / 2]], sizes=1.0,
                scales=[[0.5 * L, 0.86 * Wd, cab_h]])
     paint(cab, color)
+    # What a nadir camera keys on: a roof a shade darker than the body, dark glass at both ends of
+    # the cabin (windscreen and rear window), and the bonnet/boot seams as thin dark lines.
+    top = wheel_r + body_h + cab_h
+    roof = Cube(paths=f"{path}/roof", positions=[[-0.08 * L, 0.0, top + 0.01]], sizes=1.0, scales=[[0.30 * L, 0.80 * Wd, 0.02]])
+    paint(roof, "roof_red" if color == "stalled_vehicle" else "roof_silver")
+    for name, dx in (("windscreen", 0.13 * L), ("rear_window", -0.30 * L)):
+        g = Cube(paths=f"{path}/{name}", positions=[[dx, 0.0, top + 0.01]], sizes=1.0, scales=[[0.11 * L, 0.78 * Wd, 0.02]])
+        paint(g, "glass")
+    for name, dx in (("seam_front", 0.22 * L), ("seam_rear", -0.36 * L)):
+        sm = Cube(paths=f"{path}/{name}", positions=[[dx, 0.0, wheel_r + body_h + 0.01]], sizes=1.0, scales=[[0.02 * L, 0.90 * Wd, 0.02]])
+        paint(sm, "tyre")
+    for side in (1.0, -1.0):
+        m = Cube(paths=f"{path}/mirror_{'l' if side > 0 else 'r'}", positions=[[0.16 * L, side * (Wd / 2 + 0.08), wheel_r + body_h + 0.05]],
+                 sizes=1.0, scales=[[0.05 * L, 0.16, 0.08]])
+        paint(m, color)
     for i, (sx, sy) in enumerate(((1, 1), (1, -1), (-1, 1), (-1, -1))):
         w = Cylinder(paths=f"{path}/wheel{i}", positions=[[sx * 0.33 * L, sy * (Wd / 2 - 0.05), wheel_r]],
                      radii=[wheel_r], heights=[0.22], orientations=[wheel_quat()])

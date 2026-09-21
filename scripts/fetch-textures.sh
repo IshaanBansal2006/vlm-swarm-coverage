@@ -6,7 +6,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$HERE/sim/assets/textures"
 mkdir -p "$OUT"
-for n in sparse_grass clean_asphalt road_damaged aerial_ground_rock aerial_mud_1 leafy_grass; do
+for n in sparse_grass asphalt_pit_lane aerial_mud_1 aerial_ground_rock forrest_ground_01 clean_asphalt road_damaged leafy_grass; do
   f="$OUT/$n.jpg"
   if [ -s "$f" ]; then echo "have   $n"; continue; fi
   curl -sSL -o "$f" "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/$n/${n}_diff_2k.jpg"
