@@ -111,3 +111,12 @@ def test_star_axis_sets_dotted_keys_as_they_are(tmp_path: Path) -> None:
                      axes={"*": [{"scene.seed": 1, "scorer.cache_path": "a.json"}, {"scene.seed": 2, "scorer.cache_path": "b.json"}]})
     cells = expand(spec)
     assert [c.overrides["scene.seed"] for c in cells] == [1, 2] and cells[1].overrides["scorer.cache_path"] == "b.json"
+
+
+def test_one_at_a_time_crosses_layouts_but_not_factors(tmp_path: Path) -> None:
+    spec = SweepSpec(name="o", base=_base(tmp_path), seeds=[0], design="one_at_a_time",
+                     axes={"*": [{"scene.seed": 1}, {"scene.seed": 2}], "channel.drop_rate": [0.5, 0.9], "channel.latency_s": [2.0]})
+    cells = expand(spec)
+    assert len(cells) == 2 * (1 + 3)
+    assert all("scene.seed" in c.overrides for c in cells)
+    assert sum("channel.drop_rate" in c.overrides and "channel.latency_s" in c.overrides for c in cells) == 0

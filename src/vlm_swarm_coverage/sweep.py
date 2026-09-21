@@ -108,7 +108,11 @@ def expand(spec: SweepSpec) -> list[Cell]:
     elif spec.design == "full":
         combos = [dict(zip(keys, vals, strict=True)) for vals in itertools.product(*(spec.axes[k] for k in keys))]
     else:
-        combos = [{}] + [{k: v} for k in keys for v in spec.axes[k]]
+        # one factor at a time, crossed with the `*` axis (a layout is not a factor to screen)
+        factors = [k for k in keys if k != "*"]
+        single = [{}] + [{k: v} for k in factors for v in spec.axes[k]]
+        layouts = spec.axes.get("*", [None])
+        combos = [({"*": lay} if lay is not None else {}) | c for lay in layouts for c in single]
     combos += [dict(c) for c in spec.cells]
     cells: list[Cell] = []
     seen: set[str] = set()
