@@ -151,3 +151,11 @@ def test_cache_views_and_store_to_cache_round_trip(tmp_path) -> None:  # type: i
     cfg.write_text('name = "x"\n[area]\nwidth = 8.0\nheight = 4.0\ncell_size = 2.0\n')
     assert main(["cache-views", str(cfg), "--out", str(tmp_path / "cv.json"), "--altitudes", "12", "16"]) == 0
     assert main(["cache", str(tmp_path / "s.jsonl"), str(cfg), "--out", str(tmp_path / "c3.json"), "--model-id", "oracle"]) == 0
+    from vlm_swarm_coverage.models import ScoreCalibration
+
+    ScoreCalibration(lo=0.0, hi=0.5, floor=0.1).save(tmp_path / "cal.json")
+    store_to_cache(tmp_path / "s.jsonl", g, tmp_path / "c4.json", "oracle", calibration=tmp_path / "cal.json")
+    calibrated = CachedScorer(OracleScorer(small_gt), g, path=tmp_path / "c4.json", model_id="oracle")
+    raw = CachedScorer(OracleScorer(small_gt), g, path=tmp_path / "cache.json", model_id="oracle")
+    v = View(0, 0.0, 1.0, 1.0, 12.0, 0.0, 70.0)
+    np.testing.assert_allclose(calibrated.score(v).values, 0.1 + 0.9 * np.clip(raw.score(v).values / 0.5, 0, 1))

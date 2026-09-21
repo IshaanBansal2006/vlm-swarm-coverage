@@ -202,10 +202,16 @@ def cache_views(grid: Grid, altitudes: Sequence[float], fov_deg: float, aspect: 
     return views
 
 
-def store_to_cache(store: Path, grid: Grid, out: Path, model_id: str, altitude_step: float = 2.0, tag: str = "cache") -> int:
+def store_to_cache(store: Path, grid: Grid, out: Path, model_id: str, altitude_step: float = 2.0, tag: str = "cache",
+                   calibration: Path | None = None) -> int:
     """Records tagged `tag` in a score store -> a `CachedScorer` cache file keyed by pose bucket.
-    Two records in one bucket keep the first; the count of buckets written is returned."""
+    The store holds raw scores (decision 014); the affine calibration, if given, is applied here,
+    so one raw store yields a cache for any calibration. Two records in one bucket keep the first;
+    the count of buckets written is returned."""
+    from vlm_swarm_coverage.models import ScoreCalibration
     from vlm_swarm_coverage.scoring import CachedScorer
+
+    cal = ScoreCalibration.load(calibration) if calibration else None
 
     class _Never:
         def score(self, view: View) -> Observation:
@@ -219,7 +225,7 @@ def store_to_cache(store: Path, grid: Grid, out: Path, model_id: str, altitude_s
         key = cache.key(r.view)
         if key in cache._store:
             continue
-        cache._store[key] = (r.obs.cells, r.obs.values)
+        cache._store[key] = (r.obs.cells, cal.apply(r.obs.values) if cal else r.obs.values)
         n += 1
     if n == 0:
         raise ValueError(f"{store} holds no records tagged {tag!r}; score the cache views first")
@@ -257,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     ca.add_argument("--out", type=Path, required=True)
     ca.add_argument("--model-id", required=True)
     ca.add_argument("--altitude-step", type=float, default=2.0)
+    ca.add_argument("--calibration", type=Path, default=None, help="Affine calibration JSON applied to the raw store")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = RunConfig.load(args.config)
@@ -276,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
         n = views_to_json(cache_views(grid, alts, cfg.swarm.camera_fov_deg, cfg.swarm.camera_aspect, scene.mission.text), args.out)
         print(f"{n} cache views -> {args.out}")
     else:
-        n = store_to_cache(args.store, grid, args.out, args.model_id, args.altitude_step)
+        n = store_to_cache(args.store, grid, args.out, args.model_id, args.altitude_step, calibration=args.calibration)
         print(f"{n} buckets -> {args.out}")
     return 0
 

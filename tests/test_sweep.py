@@ -104,3 +104,10 @@ def test_composite_axis_levels_move_several_keys_together(tmp_path: Path) -> Non
     assert cfg.message.kind == "topk" and cfg.message.k == 5
     explicit = expand(SweepSpec(name="c", base=_base(tmp_path), seeds=[1], cells=[{"prior": {"kind": "other_scene", "scene_seed": 3}}]))
     assert explicit[0].overrides == {"prior.kind": "other_scene", "prior.scene_seed": 3, "sim.seed": 1}
+
+
+def test_star_axis_sets_dotted_keys_as_they_are(tmp_path: Path) -> None:
+    spec = SweepSpec(name="s", base=_base(tmp_path), seeds=[0],
+                     axes={"*": [{"scene.seed": 1, "scorer.cache_path": "a.json"}, {"scene.seed": 2, "scorer.cache_path": "b.json"}]})
+    cells = expand(spec)
+    assert [c.overrides["scene.seed"] for c in cells] == [1, 2] and cells[1].overrides["scorer.cache_path"] == "b.json"
