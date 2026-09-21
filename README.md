@@ -67,6 +67,7 @@ Inside the rig so far:
 | `bridge.py` | WSL side of the simulator bridge: poses out, observations in, wall-clock pacing. Decision 060. |
 | `render.py` | `python3 -m vlm_swarm_coverage.render configs/demo.toml` under the ROS interpreter, with Isaac running `sim/scenes/coverage_scene.py`. |
 | `calibration.py` | Raw per-view score store and a fixed-order pose sweep, so a model-stability protocol reruns unchanged on any scorer. Decision 014. |
+| `sweep.py` | `python -m vlm_swarm_coverage.sweep sweep.toml --out sweeps`: expands axes over a base config into runs, executes them in parallel, indexes them, resumes by config hash. Decision 062. |
 | `viz.py` | `python -m vlm_swarm_coverage.viz runs/<run> --video out.mp4 --summary out.png`: the belief heatmap over time beside the answer key, footprints, tracks and the Voronoi partition, all from the log. Decision 061. |
 
 Design notes and experimental records are kept privately while the work is in progress. What is
