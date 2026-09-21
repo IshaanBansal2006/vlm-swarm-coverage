@@ -52,7 +52,7 @@ Inside the rig so far:
 | Module | Role |
 |---|---|
 | `scene.py` | The world: survey area, road, mission, features with labels and footprints, drone start poses. Pure dataclasses so the simulator's Python can import it by path. Fixed demo layout plus a seeded generator for sweeps. |
-| `config.py` | One typed, validated `RunConfig` that fully determines a run. TOML in, JSON snapshot out. Unknown keys are errors. |
+| `config.py` | One typed, validated `RunConfig` that fully determines a run, including the message encoder, the fusion rule, the controller and the drones' initial belief. TOML in, JSON snapshot out. Unknown keys are errors. |
 | `artifacts.py` | A directory per run: config snapshot, provenance (package version, git sha), and an append-only JSONL event log that every metric is computed from offline. |
 | `field.py` | The importance grid over the area and the values on it, plus the ground-truth rasteriser that turns the scene's mission weights into the answer key. |
 | `schemas.py` | Typed inter-drone messages (pose, belief) with a fixed binary wire format, so every message knows its own byte size. The belief message carries a per-cell observation age; sparse and quantised variants exist. Decisions 030, 032, 033. |
@@ -60,7 +60,7 @@ Inside the rig so far:
 | `consensus.py` | Belief fusion: the no-communication endpoint, and the age-weighted per-cell average that lets drones converge where they exchange messages and disagree where they do not. Decision 022. |
 | `scoring.py` | The scorer interface, the nadir camera footprint, the oracle scorer that reads the answer key, the model slot, and the pose-bucket cache keyed to one scorer. Decisions 010–014. |
 | `world.py` | First-order drone kinematics at fixed altitude. Decision 021. |
-| `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized. Decision 020. |
+| `control.py` | Lloyd descent on the density-weighted Voronoi partition, decentralized (decision 020); a replay controller that retraces a logged run so motion can be held fixed (decision 023). |
 | `channel.py` | The channel interface, a perfect channel, and a faulted one: per-link loss, fixed latency, byte budget per sync, seeded. Decision 031. |
 | `simulation.py` | The loop: observe, score, share, fuse, control, step, log. Assembled from config. |
 | `__main__.py` | `vsc-run configs/demo.toml --out runs` |

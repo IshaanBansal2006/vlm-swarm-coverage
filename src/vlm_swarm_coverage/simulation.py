@@ -18,7 +18,7 @@ from vlm_swarm_coverage.artifacts import RunDir
 from vlm_swarm_coverage.channel import FaultedChannel
 from vlm_swarm_coverage.compress import build_encoder
 from vlm_swarm_coverage.consensus import AgeWeightedAverage, IgnoreMessages
-from vlm_swarm_coverage.control import HoldController, LloydController
+from vlm_swarm_coverage.control import HoldController, LloydController, ReplayController
 from vlm_swarm_coverage.field import Grid, ImportanceField, rasterize_ground_truth
 from vlm_swarm_coverage.scene import default_scene, random_scene
 from vlm_swarm_coverage.schemas import PoseMessage, encode_ages
@@ -142,13 +142,13 @@ class Simulation:
 
     def _commands(self) -> dict[int, NDArray[np.float64]]:
         return {
-            a.drone_id: self.controller.command(a.drone_id, d.xy, a.peers, a.belief)
+            a.drone_id: self.controller.command(a.drone_id, d.xy, a.peers, a.belief, self.world.t)
             for a, d in zip(self.agents, self.world.drones, strict=True)
         }
 
     def _log_poses(self, t: float, ev: EventLog) -> None:
         for d in self.world.drones:
-            ev.write("pose", t, drone=d.drone_id, x=round(float(d.position[0]), 3), y=round(float(d.position[1]), 3), z=d.z, yaw=round(d.yaw, 4))
+            ev.write("pose", t, drone=d.drone_id, x=round(float(d.position[0]), 5), y=round(float(d.position[1]), 5), z=d.z, yaw=round(d.yaw, 4))
 
 
 def build_scene(cfg: RunConfig) -> Scene:
@@ -177,7 +177,42 @@ def build_fusion(cfg: RunConfig) -> BeliefFusion:
 def build_controller(cfg: RunConfig) -> CoverageController:
     if cfg.controller.kind == "hold":
         return HoldController()
+    if cfg.controller.kind == "replay":
+        assert cfg.controller.replay_run is not None
+        source = RunDir.open(cfg.controller.replay_run)
+        if source.config.sim.dt != cfg.sim.dt or source.config.swarm.n_drones != cfg.swarm.n_drones:
+            raise ValueError(
+                f"replay source {source.path} ran dt={source.config.sim.dt}, n_drones={source.config.swarm.n_drones}; "
+                f"this config has dt={cfg.sim.dt}, n_drones={cfg.swarm.n_drones}. Replay needs both to match."
+            )
+        return ReplayController.from_run(source)
     return LloydController(gain=cfg.controller.gain)
+
+
+def build_prior(cfg: RunConfig, scene: Scene, grid: Grid, ground_truth: ImportanceField) -> ImportanceField:
+    """The belief every drone starts from. Returns a fresh field; callers copy per drone."""
+    p = cfg.prior
+    floor = scene.mission.floor
+    if p.kind == "floor":
+        values = np.full(grid.shape, floor)
+    elif p.kind == "truth":
+        values = ground_truth.values.copy()
+    elif p.kind == "shifted_truth":
+        dc, dr = (int(round(p.shift_m[0] / grid.cell_size)), int(round(p.shift_m[1] / grid.cell_size)))
+        values = np.full(grid.shape, floor)
+        rows, cols = grid.shape
+        src_r = slice(max(0, -dr), min(rows, rows - dr))
+        src_c = slice(max(0, -dc), min(cols, cols - dc))
+        dst_r = slice(max(0, dr), min(rows, rows + dr))
+        dst_c = slice(max(0, dc), min(cols, cols + dc))
+        values[dst_r, dst_c] = ground_truth.values[src_r, src_c]
+    else:
+        assert p.scene_seed is not None
+        other = random_scene(p.scene_seed, cfg.scene.n_targets, cfg.scene.n_distractors,
+                             cfg.area.width, cfg.area.height, cfg.swarm.n_drones, cfg.swarm.altitude)
+        values = rasterize_ground_truth(other, grid).values
+    stamps = np.full(grid.shape, np.nan if p.observed_at is None else float(p.observed_at))
+    return ImportanceField(grid, values, stamps)
 
 
 def build_channel(cfg: RunConfig) -> Channel:
@@ -206,7 +241,8 @@ def build(
     grid = Grid(cfg.area.width, cfg.area.height, cfg.area.cell_size)
     ground_truth = rasterize_ground_truth(scene, grid)
     world = KinematicWorld(scene.drone_starts, scene.width, scene.height, cfg.swarm.max_speed, cfg.sim.dt)
-    agents = [Agent(i, ImportanceField.prior(grid, scene.mission.floor)) for i in range(cfg.swarm.n_drones)]
+    prior = build_prior(cfg, scene, grid, ground_truth)
+    agents = [Agent(i, prior.copy()) for i in range(cfg.swarm.n_drones)]
     scorer = scorer or build_scorer(cfg, grid, ground_truth)
     if scorer_wrap is not None:
         scorer = scorer_wrap(scorer)
