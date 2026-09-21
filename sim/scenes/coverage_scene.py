@@ -107,6 +107,10 @@ if args.config:
                                        cfg["area"]["width"], cfg["area"]["height"], n_drones, altitude)
     else:
         SCENE = scene_mod.default_scene(n_drones, altitude)
+    if cfg["scene"].get("floor") is not None:
+        from dataclasses import replace as _replace
+
+        SCENE = _replace(SCENE, mission=_replace(SCENE.mission, floor=cfg["scene"]["floor"]))
 else:
     n_drones, altitude, fov_deg, aspect, cell_size = 3, 12.0, 70.0, 4 / 3, 2.0
     SCENE = scene_mod.default_scene(n_drones, altitude)

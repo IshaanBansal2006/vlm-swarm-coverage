@@ -9,7 +9,7 @@ those objects for the kinds this repository implements.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -154,9 +154,16 @@ class Simulation:
 def build_scene(cfg: RunConfig) -> Scene:
     if cfg.scene.kind == "random":
         assert cfg.scene.seed is not None
-        return random_scene(cfg.scene.seed, cfg.scene.n_targets, cfg.scene.n_distractors,
-                            cfg.area.width, cfg.area.height, cfg.swarm.n_drones, cfg.swarm.altitude)
-    return default_scene(cfg.swarm.n_drones, cfg.swarm.altitude)
+        scene = random_scene(cfg.scene.seed, cfg.scene.n_targets, cfg.scene.n_distractors,
+                             cfg.area.width, cfg.area.height, cfg.swarm.n_drones, cfg.swarm.altitude)
+    else:
+        scene = default_scene(cfg.swarm.n_drones, cfg.swarm.altitude)
+    if cfg.scene.floor is not None:
+        # the floor is part of the mission: how much every cell matters before anything is found.
+        # It sets the share of the answer key's mass that is background, and with it what a
+        # density-weighted controller spends its drones on (decision 067).
+        scene = replace(scene, mission=replace(scene.mission, floor=cfg.scene.floor))
+    return scene
 
 
 def build_scorer(cfg: RunConfig, grid: Grid, ground_truth: ImportanceField, scene: Scene) -> ImportanceScorer:

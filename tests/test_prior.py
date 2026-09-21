@@ -57,3 +57,12 @@ def test_prior_config_validation() -> None:
         PriorConfig(kind="truth", shift_m=(1.0, 0.0))
     with pytest.raises(ValidationError, match="scene_seed"):
         PriorConfig(kind="floor", scene_seed=1)
+
+
+def test_scene_floor_override_changes_the_answer_key_and_the_prior() -> None:
+    sim = build(RunConfig.model_validate({"name": "f", "scene": {"floor": 0.005}}))
+    gt = rasterize_ground_truth(sim.scene, sim.grid).values
+    assert sim.scene.mission.floor == 0.005 and gt.min() == 0.005 and gt.max() > 0.9
+    assert (sim.agents[0].belief.values == 0.005).all()
+    default = build(RunConfig(name="d"))
+    assert default.scene.mission.floor == 0.05
