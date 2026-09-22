@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -7,7 +8,7 @@ import numpy as np
 from vlm_swarm_coverage.__main__ import main
 from vlm_swarm_coverage.config import RunConfig
 from vlm_swarm_coverage.field import Grid
-from vlm_swarm_coverage.simulation import build, run_from_config
+from vlm_swarm_coverage.simulation import build, build_scene, jittered_starts, run_from_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -107,3 +108,38 @@ def test_belief_events_carry_ages(tmp_path: Path) -> None:
     run = run_from_config(_short(), tmp_path)
     last = list(run.iter_events("belief"))[-1]
     assert len(last["ages"]) == len(last["values"]) and min(last["ages"]) == 0
+
+
+def test_start_jitter_is_off_by_default_so_old_runs_reproduce() -> None:
+    """Every run recorded before start jitter existed used the fixed line-up. The default must
+    reproduce it exactly, or the frozen study's index stops describing its own artifacts."""
+    cfg = RunConfig.model_validate({"sim": {"seed": 7}})
+    scene = build_scene(cfg)
+    assert jittered_starts(scene, cfg) == scene.drone_starts
+
+
+def test_start_jitter_makes_sim_seed_an_independent_replicate() -> None:
+    """With a cached scorer and a perfect channel nothing else in a run is stochastic, so without
+    jitter five seeds of one layout give bit-identical results and a seed axis carries no
+    information. With jitter they differ, and differ only in the initial condition."""
+    base = {"swarm": {"start_jitter_m": 4.0}}
+    scene = build_scene(RunConfig.model_validate(base))
+    starts = [jittered_starts(scene, RunConfig.model_validate({**base, "sim": {"seed": s}}))
+              for s in range(5)]
+    assert len({tuple(s) for s in starts}) == 5
+    for s in starts:
+        assert len(s) == len(scene.drone_starts)
+        for (x, y, z), (_, _, z0) in zip(s, scene.drone_starts, strict=True):
+            assert 0.0 <= x <= scene.width and 0.0 <= y <= scene.height
+            assert z == z0, "jitter is horizontal; altitude is a mission parameter"
+    # and it is reproducible from the seed alone
+    again = jittered_starts(scene, RunConfig.model_validate({**base, "sim": {"seed": 3}}))
+    assert again == starts[3]
+
+
+def test_jitter_radius_is_respected() -> None:
+    scene = build_scene(RunConfig.model_validate({}))
+    for seed in range(20):
+        cfg = RunConfig.model_validate({"swarm": {"start_jitter_m": 2.0}, "sim": {"seed": seed}})
+        for (x, y, _), (x0, y0, _) in zip(jittered_starts(scene, cfg), scene.drone_starts, strict=True):
+            assert math.hypot(x - x0, y - y0) <= 2.0 + 1e-9
