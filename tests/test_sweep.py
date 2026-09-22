@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from vlm_swarm_coverage import sweep
 from vlm_swarm_coverage.artifacts import RunDir
 from vlm_swarm_coverage.config import RunConfig
-from vlm_swarm_coverage import sweep
 from vlm_swarm_coverage.sweep import (
     SweepSpec,
     apply_overrides,
