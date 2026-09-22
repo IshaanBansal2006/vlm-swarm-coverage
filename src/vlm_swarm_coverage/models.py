@@ -161,9 +161,30 @@ def map_to_cells(imp_map: NDArray[np.float64], view: View, grid: Grid, cells: ND
 
 
 class ImageScorer(Protocol):
-    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
-        """(h, w) map of raw importance for the frame; h, w need not equal the frame's."""
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        """(k, h, w) per-phrase logits for the frame; h, w need not equal the frame's."""
         ...
+
+    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        """(h, w) map of importance: the phrase logits reduced by `combine`."""
+        ...
+
+
+class Backend:
+    """What every backend shares: a map is its per-phrase logits, combined. Splitting the two
+    lets a caller read the distribution over phrases rather than only the winner, which is what
+    a model of *what the model confuses with what* needs."""
+
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        raise NotImplementedError
+
+    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        return combine(self.phrase_logits(frame, prompts), prompts)
+
+    def phrase_probabilities(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        """(k, h, w) probabilities: the same softmax or sigmoid `combine` applies, without the
+        weighting and the maximum, so every phrase's share is visible."""
+        return probabilities(self.phrase_logits(frame, prompts), prompts)
 
 
 def _device(device: str | None) -> str:
@@ -179,24 +200,29 @@ def _features(out):  # type: ignore[no-untyped-def]
     return getattr(out, "pooler_output", None) if hasattr(out, "pooler_output") else out
 
 
-def combine(logits: NDArray[np.float64], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
-    """(k, h, w) per-phrase logits -> (h, w) importance in [0, 1]: each target phrase's probability
-    times its weight, keeping the strongest, mirroring the answer key's rule that a cell takes its
-    most important feature. With any background phrase present the probabilities are a softmax
-    across all phrases (contrast); without, each phrase's own sigmoid."""
+def probabilities(logits: NDArray[np.float64], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+    """(k, h, w) logits -> (k, h, w) probabilities: softmax across phrases when any background
+    phrase is present (the contrast recipe of decision 016), else each phrase's own sigmoid."""
     logits = np.asarray(logits, dtype=np.float64)
     if logits.shape[0] != len(prompts):
         raise ValueError(f"{logits.shape[0]} logit maps for {len(prompts)} prompts")
     if any(not p.is_target for p in prompts):
         shifted = logits - logits.max(axis=0, keepdims=True)
-        probs = np.exp(shifted) / np.exp(shifted).sum(axis=0, keepdims=True)
-    else:
-        probs = 1.0 / (1.0 + np.exp(-logits))
+        return np.exp(shifted) / np.exp(shifted).sum(axis=0, keepdims=True)
+    return 1.0 / (1.0 + np.exp(-logits))
+
+
+def combine(logits: NDArray[np.float64], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+    """(k, h, w) per-phrase logits -> (h, w) importance in [0, 1]: each target phrase's probability
+    times its weight, keeping the strongest, mirroring the answer key's rule that a cell takes its
+    most important feature. With any background phrase present the probabilities are a softmax
+    across all phrases (contrast); without, each phrase's own sigmoid."""
+    probs = probabilities(logits, prompts)
     weights = np.array([p.weight for p in prompts])[:, None, None]
     return (probs * weights).max(axis=0)
 
 
-class ClipSegBackend:
+class ClipSegBackend(Backend):
     """CLIPSeg: one 352x352 logit map per phrase, sigmoid to [0, 1]."""
 
     def __init__(self, hf_id: str = MODEL_IDS["clipseg"][1], device: str | None = None) -> None:
@@ -208,7 +234,7 @@ class ClipSegBackend:
         self.model = CLIPSegForImageSegmentation.from_pretrained(hf_id).to(self.device).eval()
         self._torch = torch
 
-    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
         from PIL import Image
 
         image = Image.fromarray(np.asarray(frame))
@@ -216,8 +242,7 @@ class ClipSegBackend:
         inputs = self.processor(text=texts, images=[image] * len(texts), padding=True, return_tensors="pt").to(self.device)
         with self._torch.inference_mode():
             logits = self.model(**inputs).logits
-        maps = logits.float().cpu().numpy().reshape(len(texts), *logits.shape[-2:])
-        return combine(maps, prompts)
+        return logits.float().cpu().numpy().reshape(len(texts), *logits.shape[-2:])
 
 
 def tile_boxes(height: int, width: int, rows: int, cols: int) -> list[tuple[int, int, int, int]]:
@@ -226,7 +251,7 @@ def tile_boxes(height: int, width: int, rows: int, cols: int) -> list[tuple[int,
     return [(ys[r], ys[r + 1], xs[c], xs[c + 1]) for r in range(rows) for c in range(cols)]
 
 
-class TileBackend:
+class TileBackend(Backend):
     """Any image-text model, made dense by tiling: each tile is embedded as an image and scored
     against each phrase. SigLIP-style models give a per-tile probability (sigmoid of the scaled,
     biased cosine); CLIP-style models give the cosine itself. The map is `rows x cols`."""
@@ -250,7 +275,7 @@ class TileBackend:
             self._text_cache[phrases] = emb / emb.norm(dim=-1, keepdim=True)
         return self._text_cache[phrases]
 
-    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
         from PIL import Image
 
         frame = np.asarray(frame)
@@ -269,8 +294,7 @@ class TileBackend:
                 cos = cos * scale.exp() + bias
             else:
                 cos = cos * CLIP_LOGIT_SCALE
-            maps = cos.T.detach().float().cpu().numpy().reshape(len(prompts), rows, cols)
-        return combine(maps, prompts)
+            return cos.T.detach().float().cpu().numpy().reshape(len(prompts), rows, cols)
 
 
 class OpenClipTileBackend(TileBackend):
@@ -299,7 +323,7 @@ class OpenClipTileBackend(TileBackend):
             self._text_cache[phrases] = emb / emb.norm(dim=-1, keepdim=True)
         return self._text_cache[phrases]
 
-    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
         from PIL import Image
 
         frame = np.asarray(frame)
@@ -310,10 +334,10 @@ class OpenClipTileBackend(TileBackend):
             img = self.model.encode_image(batch)
         img = img / img.norm(dim=-1, keepdim=True)
         logits = (img @ self._text(tuple(p.phrase for p in prompts)).T).T * CLIP_LOGIT_SCALE
-        return combine(logits.float().cpu().numpy().reshape(len(prompts), rows, cols), prompts)
+        return logits.float().cpu().numpy().reshape(len(prompts), rows, cols)
 
 
-class Owlv2Backend:
+class Owlv2Backend(Backend):
     """OWLv2: boxes with scores per phrase, painted into a map at the frame's resolution; a
     pixel takes the strongest weighted detection covering it, zero elsewhere."""
 
@@ -327,7 +351,10 @@ class Owlv2Backend:
         self.model = Owlv2ForObjectDetection.from_pretrained(hf_id).to(self.device).eval()
         self._torch = torch
 
-    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        """A detector has no logit field. Each target phrase gets a map of its own detections,
+        as a logit so `combine`'s sigmoid returns the detection confidence; background phrases
+        get a constant that leaves them at the softmax's mercy only where nothing was found."""
         from PIL import Image
 
         frame = np.asarray(frame)
@@ -339,14 +366,26 @@ class Owlv2Backend:
             outputs = self.model(**inputs)
         side = max(image.size)
         results = self.processor.post_process_grounded_object_detection(outputs, threshold=self.threshold, target_sizes=[(side, side)])[0]
-        out = np.zeros(frame.shape[:2])
+        conf = np.zeros((len(prompts), *frame.shape[:2]))
+        index = {id(p): i for i, p in enumerate(prompts)}
         for box, score, label in zip(results["boxes"], results["scores"], results["labels"], strict=True):
             x0, y0, x1, y1 = [int(round(float(v))) for v in box]
             x0, x1 = max(0, x0), min(frame.shape[1], x1)
             y0, y1 = max(0, y0), min(frame.shape[0], y1)
             if x1 > x0 and y1 > y0:
-                out[y0:y1, x0:x1] = np.maximum(out[y0:y1, x0:x1], float(score) * targets[int(label)].weight)
-        return out
+                k = index[id(targets[int(label)])]
+                conf[k, y0:y1, x0:x1] = np.maximum(conf[k, y0:y1, x0:x1], float(score))
+        eps = 1e-6
+        return np.log(np.clip(conf, eps, 1 - eps) / (1 - np.clip(conf, eps, 1 - eps)))
+
+    def importance_map(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        """Detections are already per-phrase confidences, so they combine through their own
+        sigmoid. Passing them through the contrast softmax would hand every undetected cell a
+        share of the probability mass, which for a detector means inventing importance."""
+        targets = [p for p in prompts if p.is_target]
+        logits = self.phrase_logits(frame, prompts)
+        keep = [i for i, p in enumerate(prompts) if p.is_target]
+        return combine(logits[keep], targets)
 
 
 # --- The scorer ------------------------------------------------------------------------------------
