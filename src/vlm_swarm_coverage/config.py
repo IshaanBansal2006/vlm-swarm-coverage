@@ -63,6 +63,12 @@ class SwarmConfig(_Strict):
     max_speed: float = Field(3.0, gt=0, description="Speed limit per drone, m/s.")
     camera_fov_deg: float = Field(70.0, gt=0, lt=180, description="Full horizontal field of view.")
     camera_aspect: float = Field(4 / 3, gt=0, description="Image width / height.")
+    start_jitter_m: float = Field(
+        0.0, ge=0,
+        description="Radius of a uniform random offset applied to each drone's start, drawn from "
+                    "sim.seed. 0 keeps the fixed line-up, which is what every run before this "
+                    "used. Non-zero makes sim.seed an independent replicate of the same world.",
+    )
 
 
 class SimConfig(_Strict):

@@ -197,6 +197,33 @@ def build_controller(cfg: RunConfig) -> CoverageController:
     return LloydController(gain=cfg.controller.gain)
 
 
+def jittered_starts(scene: Scene, cfg: RunConfig) -> tuple[tuple[float, float, float], ...]:
+    """The swarm's initial positions, optionally perturbed by `swarm.start_jitter_m` under
+    `sim.seed`.
+
+    Without this the start is a fixed line along the west edge, so a run is fully determined by
+    its scene: five sim seeds of the same layout produce bit-identical trajectories. That is
+    correct whenever something else in the run is stochastic -- a lossy channel, an injected error
+    -- and silently wrong when nothing is, because then a sweep's seed axis contributes no
+    information and any interval computed across it is a bootstrap over copies of one number.
+
+    A perturbed start is the right independent replicate for a coverage experiment: the world is
+    held fixed and the swarm's initial condition is resampled, which is exactly the variation the
+    locational cost is supposed to be robust to. Default 0.0 so every run recorded before this
+    existed reproduces bit for bit.
+    """
+    if cfg.swarm.start_jitter_m <= 0:
+        return scene.drone_starts
+    rng = np.random.default_rng(cfg.sim.seed)
+    out = []
+    for x, y, z in scene.drone_starts:
+        angle = rng.uniform(0.0, 2.0 * np.pi)
+        radius = cfg.swarm.start_jitter_m * np.sqrt(rng.uniform(0.0, 1.0))  # uniform over the disc
+        out.append((float(np.clip(x + radius * np.cos(angle), 0.0, scene.width)),
+                    float(np.clip(y + radius * np.sin(angle), 0.0, scene.height)), float(z)))
+    return tuple(out)
+
+
 def build_prior(cfg: RunConfig, scene: Scene, grid: Grid, ground_truth: ImportanceField) -> ImportanceField:
     """The belief every drone starts from. Returns a fresh field; callers copy per drone."""
     p = cfg.prior
@@ -248,7 +275,8 @@ def build(
         )
     grid = Grid(cfg.area.width, cfg.area.height, cfg.area.cell_size)
     ground_truth = rasterize_ground_truth(scene, grid)
-    world = KinematicWorld(scene.drone_starts, scene.width, scene.height, cfg.swarm.max_speed, cfg.sim.dt)
+    world = KinematicWorld(jittered_starts(scene, cfg), scene.width, scene.height,
+                           cfg.swarm.max_speed, cfg.sim.dt)
     prior = build_prior(cfg, scene, grid, ground_truth)
     agents = [Agent(i, prior.copy()) for i in range(cfg.swarm.n_drones)]
     scorer = scorer or build_scorer(cfg, grid, ground_truth, scene)
