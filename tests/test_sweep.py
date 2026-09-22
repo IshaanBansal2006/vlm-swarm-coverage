@@ -7,6 +7,7 @@ import pytest
 
 from vlm_swarm_coverage.artifacts import RunDir
 from vlm_swarm_coverage.config import RunConfig
+from vlm_swarm_coverage import sweep
 from vlm_swarm_coverage.sweep import (
     SweepSpec,
     apply_overrides,
@@ -132,3 +133,26 @@ def test_resume_hash_covers_hook_params_and_path_contents(tmp_path: Path) -> Non
     f.write_text('{"sigma": 1}')
     b = config_hash(cfg, {"error": {"path": str(f), "scale": 1.0}})
     assert a != b
+
+
+def test_a_run_whose_cache_file_changed_is_not_treated_as_done(tmp_path):
+    """The cache is the perception model for a cached run, but the config records only its path.
+    A row that recorded the cache's content must re-run when that content changes."""
+    cache = tmp_path / "cache.json"
+    cache.write_text('{"entries": {}}')
+    cfg = RunConfig.model_validate({"scorer": {"kind": "cached", "cache_path": str(cache)}})
+
+    before = sweep.input_digests(cfg)
+    assert before["scorer.cache_path"]
+
+    cache.write_text('{"entries": {"0,0,0": {"cells": [[0, 0]], "values": [1.0]}}}')
+    after = sweep.input_digests(cfg)
+    assert after != before
+    assert sweep.config_hash(cfg) == sweep.config_hash(cfg)  # identity itself is unchanged
+
+
+def test_a_row_written_before_digests_existed_stays_done(tmp_path):
+    """Rows from the frozen study carry no digests; they must not all re-run."""
+    cfg = RunConfig.model_validate({"scorer": {"kind": "oracle"}})
+    old_row = {"config_hash": sweep.config_hash(cfg), "status": "ok"}
+    assert old_row.get("input_digests") is None
