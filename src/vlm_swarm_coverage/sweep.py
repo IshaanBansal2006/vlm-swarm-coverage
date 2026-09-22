@@ -159,6 +159,39 @@ def _param_digest(value: Any) -> Any:
     return value
 
 
+def input_digests(cfg: RunConfig) -> dict[str, str]:
+    """Content digests of every existing file the config points at (caches, calibrations, scenes).
+
+    A cached run's importance cache *is* its perception model, but the config records only the
+    path, so regenerating a cache leaves a finished run's identity unchanged. These digests are
+    recorded on the index row rather than folded into `config_hash`: folding them in would change
+    the identity of every run already on disk. Resume compares them when a row carries them and
+    ignores them when it does not, so rows written before this existed stay valid.
+    """
+    out: dict[str, str] = {}
+    for field, value in sorted(_paths_in(cfg.model_dump(mode="json")).items()):
+        path = Path(value)
+        if path.is_file():
+            out[field] = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    return out
+
+
+def _paths_in(data: Any, prefix: str = "") -> dict[str, str]:
+    """Dotted config keys whose value names a file: any string under a key ending in `path`."""
+    found: dict[str, str] = {}
+    if isinstance(data, dict):
+        for key, value in data.items():
+            here = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(value, str) and (str(key).endswith("path") or str(key) == "calibration"):
+                found[here] = value
+            else:
+                found.update(_paths_in(value, here))
+    elif isinstance(data, list):
+        for i, value in enumerate(data):
+            found.update(_paths_in(value, f"{prefix}[{i}]"))
+    return found
+
+
 def config_hash(cfg: RunConfig, params: dict[str, Any] | None = None) -> str:
     """The identity of a run for resume: its full config and, when given, its hook parameters."""
     payload = {"config": cfg.model_dump(mode="json"), "params": _param_digest(params or {})}
@@ -176,7 +209,8 @@ def run_cell(cfg_json: str, out_root: str, cell: Cell, hook: str | None, post_ru
     """One run, in a worker process. Never raises: a failure is a row with status 'error'."""
     cfg = RunConfig.model_validate_json(cfg_json)
     row: dict[str, Any] = {"cell_id": cell.cell_id, "overrides": cell.overrides, "params": cell.params,
-                           "config_hash": config_hash(cfg, cell.params), "seed": cfg.sim.seed}
+                           "config_hash": config_hash(cfg, cell.params), "seed": cfg.sim.seed,
+                           "input_digests": input_digests(cfg)}
     t0 = time.perf_counter()
     try:
         kwargs = _import(hook)(cfg, cell.params) if hook else {}
@@ -205,14 +239,22 @@ def run_sweep(spec: SweepSpec, out_root: Path | str, dry_run: bool = False) -> l
     sweep_dir.mkdir(parents=True, exist_ok=True)
     index_path = sweep_dir / INDEX_FILE
     rows = read_index(index_path)
-    done = {r["config_hash"] for r in rows if r.get("status") == "ok"}
+    done = {r["config_hash"]: r.get("input_digests") for r in rows if r.get("status") == "ok"}
     todo: list[tuple[str, Cell]] = []
+    stale = 0
     for cell in cells:
         cfg = apply_overrides(base, cell.overrides, name=f"{spec.name}-{cell.cell_id}")
-        if config_hash(cfg, cell.params) in done:
-            continue
+        key = config_hash(cfg, cell.params)
+        if key in done:
+            recorded = done[key]
+            # a row from before input_digests existed carries None: trust it rather than re-run
+            # the frozen study, but a row that recorded digests must still match them
+            if recorded is None or recorded == input_digests(cfg):
+                continue
+            stale += 1
         todo.append((cfg.model_dump_json(), cell))
-    log.info("sweep %s: %d cells, %d already done, %d to run, %d workers", spec.name, len(cells), len(cells) - len(todo), len(todo), spec.workers)
+    log.info("sweep %s: %d cells, %d already done, %d to run (%d of them stale inputs), %d workers",
+             spec.name, len(cells), len(cells) - len(todo), len(todo), stale, spec.workers)
     if dry_run:
         for _, cell in todo:
             print(cell.cell_id, json.dumps(cell.overrides, sort_keys=True), json.dumps(cell.params, sort_keys=True))
