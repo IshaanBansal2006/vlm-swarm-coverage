@@ -226,9 +226,33 @@ def run_cell(cfg_json: str, out_root: str, cell: Cell, hook: str | None, post_ru
 
 
 def read_index(path: Path) -> list[dict[str, Any]]:
+    """Every parseable row of an append-only index, warning about any that are not.
+
+    A process killed mid-append leaves a torn line — in practice a run of NUL bytes, because the
+    filesystem allocated the block but the data never reached it. Refusing to read the file then
+    loses every completed run recorded before the crash, which defeats the point of resuming at
+    all: the study this was found in had 36 good rows behind one 966-byte line of NULs.
+
+    Unparseable lines are skipped and *counted in a warning* rather than dropped quietly. Silence
+    would turn real data loss into a smaller sweep that still looks finished, and a torn line in
+    the middle of a file means something worse than a clean kill.
+    """
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    rows, damaged = [], []
+    for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+        if not line.strip() or line.strip("\x00") == "":
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            damaged.append(number)
+    if damaged:
+        log.warning("index %s: skipped %d unparseable line(s) at %s; %d rows kept. A torn final "
+                    "line is a process killed mid-append and is safe to ignore; earlier ones are "
+                    "not, and that file should be checked before its results are trusted.",
+                    path, len(damaged), damaged[:5], len(rows))
+    return rows
 
 
 def run_sweep(spec: SweepSpec, out_root: Path | str, dry_run: bool = False) -> list[dict[str, Any]]:
