@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -156,3 +157,26 @@ def test_a_row_written_before_digests_existed_stays_done(tmp_path):
     cfg = RunConfig.model_validate({"scorer": {"kind": "oracle"}})
     old_row = {"config_hash": sweep.config_hash(cfg), "status": "ok"}
     assert old_row.get("input_digests") is None
+
+
+def test_read_index_survives_a_line_torn_by_a_crash(tmp_path, caplog):
+    """A process killed mid-append leaves a partial line — in practice NUL bytes, because the
+    block was allocated but never written. Refusing to parse the file would discard every run
+    completed before the crash, which is exactly what resuming exists to avoid."""
+    index = tmp_path / "index.jsonl"
+    good = [{"config_hash": f"h{i}", "status": "ok"} for i in range(3)]
+    index.write_text("\n".join(json.dumps(r) for r in good) + "\n" + "\x00" * 900)
+
+    with caplog.at_level(logging.WARNING):
+        rows = sweep.read_index(index)
+    assert rows == good
+    assert not caplog.records, "a line of NULs is an empty torn tail, not damage worth warning about"
+
+
+def test_read_index_warns_about_a_line_it_cannot_parse(tmp_path, caplog):
+    index = tmp_path / "index.jsonl"
+    index.write_text('{"config_hash": "a", "status": "ok"}\n{"truncated": \n{"config_hash": "b"}\n')
+    with caplog.at_level(logging.WARNING):
+        rows = sweep.read_index(index)
+    assert [r["config_hash"] for r in rows] == ["a", "b"]
+    assert any("unparseable" in r.getMessage() for r in caplog.records)
