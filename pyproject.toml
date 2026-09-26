@@ -15,6 +15,9 @@ dependencies = [
     "numpy>=1.26",
     "pydantic>=2.0",
     "tomli>=2.0; python_version < '3.11'",
+    # Small and GPU-free: finished runs' event logs may be zstd-compressed (events.jsonl.zst),
+    # and replay/metrics must read them. Imported lazily, so the rig imports without it.
+    "zstandard>=0.22",
 ]
 
 [project.optional-dependencies]

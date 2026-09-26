@@ -41,6 +41,37 @@ def test_iter_events_on_run_that_never_logged(tmp_path: Path) -> None:
     assert list(run.iter_events()) == []
 
 
+def _compress_log(run: RunDir) -> None:
+    """What `aos runs compress` does: events.jsonl -> events.jsonl.zst, original removed."""
+    zstandard = pytest.importorskip("zstandard")
+    run.compressed_events_path.write_bytes(
+        zstandard.ZstdCompressor(level=9).compress(run.events_path.read_bytes())
+    )
+    run.events_path.unlink()
+
+
+def test_iter_events_reads_a_compressed_log(tmp_path: Path) -> None:
+    run = RunDir.create(tmp_path, RunConfig(name="t"))
+    with run.events() as ev:
+        for i in range(500):
+            ev.write("pose" if i % 2 else "score", i * 0.1, drone=i % 3, xy=[i, -i])
+    before = list(run.iter_events())
+    _compress_log(run)
+    reopened = RunDir.open(run.path)
+    assert list(reopened.iter_events()) == before
+    assert [e["drone"] for e in reopened.iter_events("pose")][:3] == [1, 0, 2]
+
+
+def test_appending_to_a_compressed_run_is_refused(tmp_path: Path) -> None:
+    run = RunDir.create(tmp_path, RunConfig(name="t"))
+    with run.events() as ev:
+        ev.write("pose", 0.0, drone=0)
+    _compress_log(run)
+    with pytest.raises(FileExistsError, match="aos runs restore"):
+        run.events()
+    assert not run.events_path.exists()
+
+
 def test_open_non_run_dir_is_actionable(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="config.json"):
         RunDir.open(tmp_path)

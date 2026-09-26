@@ -10,10 +10,15 @@ Layout of one run directory:
         config.json    the RunConfig that produced this run, verbatim
         meta.json      provenance: run id, package version, git sha, creation time
         events.jsonl   one JSON object per line, append-only, time-ordered per writer
+
+A finished run's log may instead be events.jsonl.zst: Agent OS zstd-compresses distilled logs to
+save disk (`aos runs compress`), and `iter_events` reads either form. Appending needs the plain
+file back first (`aos runs restore`).
 """
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import subprocess
@@ -32,6 +37,7 @@ log = logging.getLogger(__name__)
 CONFIG_FILE = "config.json"
 META_FILE = "meta.json"
 EVENTS_FILE = "events.jsonl"
+EVENTS_ZST = "events.jsonl.zst"
 
 
 def git_sha(repo: Path | None = None) -> str | None:
@@ -130,17 +136,46 @@ class RunDir:
     def events_path(self) -> Path:
         return self.path / EVENTS_FILE
 
+    @property
+    def compressed_events_path(self) -> Path:
+        return self.path / EVENTS_ZST
+
     def events(self, flush_every: int = 100) -> EventLog:
+        # Appending beside a compressed log would split the run's history across two files.
+        if not self.events_path.exists() and self.compressed_events_path.exists():
+            raise FileExistsError(
+                f"{self.path} has a compressed event log ({EVENTS_ZST}); restore it with "
+                f"`aos runs restore` before appending."
+            )
         return EventLog(self.events_path, flush_every=flush_every)
 
     def iter_events(self, kind: str | None = None) -> Iterator[dict[str, Any]]:
-        """Stream logged events, optionally filtered by kind. Empty if the run never logged."""
-        if not self.events_path.exists():
-            return
-        with self.events_path.open(encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                record = json.loads(line)
-                if kind is None or record["kind"] == kind:
-                    yield record
+        """Stream logged events, optionally filtered by kind. Empty if the run never logged.
+
+        Reads events.jsonl, or events.jsonl.zst when the log was compressed.
+        """
+        for line in self._event_lines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if kind is None or record["kind"] == kind:
+                yield record
+
+    def _event_lines(self) -> Iterator[str]:
+        # The plain file wins when both exist (a restore in progress, or a run appended to later).
+        if self.events_path.exists():
+            with self.events_path.open(encoding="utf-8") as fh:
+                yield from fh
+        elif self.compressed_events_path.exists():
+            try:
+                import zstandard
+            except ImportError as exc:
+                raise ImportError(
+                    f"{self.compressed_events_path} is zstd-compressed and reading it needs the "
+                    f"zstandard package; install it, or restore the log with `aos runs restore`."
+                ) from exc
+            with (
+                self.compressed_events_path.open("rb") as raw,
+                zstandard.ZstdDecompressor().stream_reader(raw) as reader,
+            ):
+                yield from io.TextIOWrapper(reader, encoding="utf-8")
