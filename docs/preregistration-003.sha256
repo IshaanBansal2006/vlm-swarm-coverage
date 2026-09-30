@@ -1,0 +1,9 @@
+# Pre-registration 003 (paper v2, track P): static predictor of closed-loop efficiency.
+# Written 2026-09-30 before any fresh-layout (seeds 25-44), off-road-family, new-model or ergodic-controller data existed.
+# The files are private (docs/private, runs/); their sha256 fix what was decided. A frozen copy of maps.py is kept at docs/private/v2/predictor/frozen/maps.py.
+b3b3a4d6e9d9144d407a7d82f6ed449d728a938c0d6ce7d84bab72dd1e8d05f5  docs/private/v2/predictor/predictor.py
+a41bdfe7ac76d24c68dad3eddef4183202f41b268b3c1763b16646d00601f51a  docs/private/v2/predictor/evaluate.py
+20e00c92ea81e0938c2ee72f7e65e43fb281a86609d47aff7170d1d351d3815b  docs/private/pipeline/maps.py
+e6bcd6c58a615618912a3549112f624ae0ec5b0c8c763d809fda4a00a3a195cf  docs/private/v2/predictor/PREREG.md
+9062e07cc6751c0eb314934164e2cea14ef6424c64cf03fcb40682754f15c0f2  runs/study/calibration/clipseg/error_model.json
+763e9574b474c608acc8a78a2016b70e49ff83dbc6b60074f8c65ed18d419edc  runs/study/confusion/model-frozen.npz
