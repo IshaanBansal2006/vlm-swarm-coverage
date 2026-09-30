@@ -55,6 +55,9 @@ MODEL_IDS: dict[str, tuple[str, str]] = {
     "remoteclip-b32": ("openclip", "ViT-B-32|chendelong/RemoteCLIP|RemoteCLIP-ViT-B-32.pt"),
     "remoteclip-l14": ("openclip", "ViT-L-14|chendelong/RemoteCLIP|RemoteCLIP-ViT-L-14.pt"),
     "owlv2": ("owlv2", "google/owlv2-base-patch16-ensemble"),
+    "owlv2-density": ("owlv2-density", "google/owlv2-base-patch16-ensemble"),
+    "siglip2-dense": ("siglip-patches", "google/siglip2-base-patch16-384"),
+    "remoteclip-l14-dense": ("openclip-patches", "ViT-L-14|chendelong/RemoteCLIP|RemoteCLIP-ViT-L-14.pt"),
 }
 NULL_PHRASE = "something important"
 BACKGROUND_PHRASES: tuple[str, ...] = ("grass", "bare soil", "an asphalt road", "a tree", "a building roof", "an empty field")
@@ -388,6 +391,172 @@ class Owlv2Backend(Backend):
         return combine(logits[keep], targets)
 
 
+def gaussian_splat_max(boxes: NDArray[np.float64], scores: NDArray[np.float64], height: int, width: int,
+                       sigma_frac: float = 0.25) -> NDArray[np.float64]:
+    """(n, 4) boxes (x0, y0, x1, y1, in map pixels) with scores -> (height, width) density: each box
+    is a Gaussian of peak `score`, centred on the box, with sigma = `sigma_frac` of its width and
+    height (so the box edge sits at 2 sigma); overlaps take the maximum. The maximum keeps the
+    value in the detector's own confidence units whatever the number of overlapping boxes: OWLv2
+    predicts one box per image patch, so a large object carries many near-duplicate boxes and a
+    sum would grow with object size and duplicate count rather than with confidence."""
+    out = np.zeros((height, width))
+    if len(boxes) == 0:
+        return out
+    xs, ys = np.arange(width) + 0.5, np.arange(height) + 0.5
+    for (x0, y0, x1, y1), s in zip(boxes, scores, strict=True):
+        cx, cy = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+        sx, sy = max(sigma_frac * (x1 - x0), 0.5), max(sigma_frac * (y1 - y0), 0.5)
+        u0, u1 = max(0, int(cx - 3 * sx)), min(width, int(np.ceil(cx + 3 * sx)) + 1)
+        v0, v1 = max(0, int(cy - 3 * sy)), min(height, int(np.ceil(cy + 3 * sy)) + 1)
+        if u1 <= u0 or v1 <= v0:
+            continue
+        gx = np.exp(-0.5 * ((xs[u0:u1] - cx) / sx) ** 2)
+        gy = np.exp(-0.5 * ((ys[v0:v1] - cy) / sy) ** 2)
+        np.maximum(out[v0:v1, u0:u1], float(s) * np.outer(gy, gx), out=out[v0:v1, u0:u1])
+    return out
+
+
+class Owlv2DensityBackend(Owlv2Backend):
+    """OWLv2 as a density rather than painted boxes: every predicted box above a low threshold
+    (default 0.01, so weak evidence is kept rather than cut to zero) is splatted as a
+    score-weighted Gaussian (`gaussian_splat_max`), per phrase, on a map at `scale` of the frame's
+    resolution. A pixel then takes the strongest weighted phrase, as `combine` does for the other
+    models, without the background-phrase softmax a detector has no use for."""
+
+    def __init__(self, hf_id: str = MODEL_IDS["owlv2"][1], device: str | None = None, threshold: float = 0.01,
+                 scale: float = 0.25) -> None:
+        super().__init__(hf_id, device, threshold)
+        self.scale = scale
+
+    def target_density(self, frame: NDArray[np.uint8], targets: Sequence[Prompt]) -> NDArray[np.float64]:
+        """(k_targets, h, w) Gaussian densities in [0, 1], one per target phrase."""
+        from PIL import Image
+
+        frame = np.asarray(frame)
+        image = Image.fromarray(frame)
+        inputs = self.processor(text=[[p.phrase for p in targets]], images=image, return_tensors="pt").to(self.device)
+        with self._torch.inference_mode():
+            outputs = self.model(**inputs)
+        side = max(image.size)
+        res = self.processor.post_process_grounded_object_detection(outputs, threshold=self.threshold, target_sizes=[(side, side)])[0]
+        h, w = max(1, round(frame.shape[0] * self.scale)), max(1, round(frame.shape[1] * self.scale))
+        boxes = res["boxes"].float().cpu().numpy() * self.scale
+        scores, labels = res["scores"].float().cpu().numpy(), res["labels"].cpu().numpy()
+        return np.stack([gaussian_splat_max(boxes[labels == k], scores[labels == k], h, w) for k in range(len(targets))])
+
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        targets = [p for p in prompts if p.is_target]
+        dens = self.target_density(frame, targets)
+        out = np.zeros((len(prompts), *dens.shape[1:]))
+        out[[i for i, p in enumerate(prompts) if p.is_target]] = dens
+        eps = 1e-6
+        return np.log(np.clip(out, eps, 1 - eps) / (1 - np.clip(out, eps, 1 - eps)))
+
+
+def _upsample(maps: NDArray[np.float64], height: int, width: int) -> NDArray[np.float64]:
+    import torch
+
+    t = torch.as_tensor(np.asarray(maps, dtype=np.float32))[None]
+    return torch.nn.functional.interpolate(t, size=(height, width), mode="bilinear", align_corners=False)[0].numpy().astype(np.float64)
+
+
+class SiglipPatchBackend(TileBackend):
+    """Dense SigLIP: every patch token of one forward pass, compared with the phrase embeddings.
+
+    SigLIP pools patches with an attention head (a learned probe attending over the tokens), so a
+    patch token is not in the text-aligned space until it goes through that head. Following
+    MaskCLIP, each token takes the head's value path alone (value projection, output projection),
+    which is what the probe's attention would return if it attended to that one patch, then the
+    head's layer norm + MLP residual as the pooled output does. Cosines are scaled and biased with
+    the model's own logit scale and bias, and the patch grid is upsampled bilinearly to the frame
+    (the frame is resized square to the model's input, so the grid spans the whole frame)."""
+
+    def __init__(self, hf_id: str = MODEL_IDS["siglip2-dense"][1], device: str | None = None, mlp: bool = True) -> None:
+        super().__init__(hf_id, device)
+        self.mlp = mlp
+
+    def patch_embeddings(self, frame: NDArray[np.uint8]):  # type: ignore[no-untyped-def]
+        """(grid_h, grid_w, d) unit-norm patch embeddings in the text-aligned space."""
+        from PIL import Image
+
+        vm = self.model.vision_model
+        inputs = self.processor(images=[Image.fromarray(np.asarray(frame))], return_tensors="pt").to(self.device)
+        with self._torch.inference_mode():
+            tokens = vm(pixel_values=inputs["pixel_values"]).last_hidden_state[0]   # post-layernorm (n, d)
+            att = vm.head.attention
+            d = tokens.shape[-1]
+            v = tokens @ att.in_proj_weight[2 * d:].T + att.in_proj_bias[2 * d:]
+            h = att.out_proj(v)
+            if self.mlp:
+                h = h + vm.head.mlp(vm.head.layernorm(h))
+            h = h / h.norm(dim=-1, keepdim=True)
+        side = int(round(math.sqrt(h.shape[0])))
+        return h.reshape(side, side, -1)
+
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        emb = self.patch_embeddings(frame)
+        text = self._text(tuple(p.phrase for p in prompts))
+        with self._torch.inference_mode():
+            cos = (emb @ text.T).permute(2, 0, 1)
+            logits = cos * self.model.logit_scale.exp() + self.model.logit_bias
+        frame = np.asarray(frame)
+        return _upsample(logits.float().cpu().numpy(), frame.shape[0], frame.shape[1])
+
+
+class OpenClipPatchBackend(OpenClipTileBackend):
+    """Dense CLIP (open_clip checkpoints such as RemoteCLIP) from patch tokens, ClearCLIP-style:
+    the last transformer block's attention is replaced by its value path alone, with the residual
+    and the MLP dropped, then the visual head's layer norm and projection map each patch into the
+    text space. Plain CLIP patch tokens are dominated by global context; the value path is what
+    keeps them local. Logits are 100 x cosine, as for the tile backend."""
+
+    def _square(self, image):  # type: ignore[no-untyped-def]
+        """The whole frame resized to the model's square input (open_clip's own preprocess centre-
+        crops, which would drop the frame's sides and misplace every patch), then normalised."""
+        size = self.model.visual.image_size
+        size = size if isinstance(size, (tuple, list)) else (size, size)
+        norm = next(t for t in self.preprocess.transforms if type(t).__name__ == "Normalize")
+        a = np.asarray(image.convert("RGB").resize((int(size[1]), int(size[0])), resample=3), dtype=np.float32) / 255.0
+        t = self._torch.as_tensor(a).permute(2, 0, 1)
+        mean = self._torch.tensor(norm.mean).view(3, 1, 1)
+        std = self._torch.tensor(norm.std).view(3, 1, 1)
+        return ((t - mean) / std)[None].to(self.device)
+
+    def patch_embeddings(self, frame: NDArray[np.uint8]):  # type: ignore[no-untyped-def]
+        from PIL import Image
+
+        visual = self.model.visual
+        x = self._square(Image.fromarray(np.asarray(frame)))
+        with self._torch.inference_mode():
+            x = visual.conv1(x)
+            grid = x.shape[-2:]
+            x = x.reshape(x.shape[0], x.shape[1], -1).permute(0, 2, 1)
+            cls = visual.class_embedding.to(x.dtype) + self._torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device)
+            x = self._torch.cat([cls, x], dim=1) + visual.positional_embedding.to(x.dtype)
+            x = visual.patch_dropout(x)
+            x = visual.ln_pre(x)
+            blocks = visual.transformer.resblocks
+            for blk in blocks[:-1]:
+                x = blk(x)
+            last = blocks[-1]
+            y = last.ln_1(x)
+            attn = last.attn
+            d = y.shape[-1]
+            v = y @ attn.in_proj_weight[2 * d:].T + attn.in_proj_bias[2 * d:]
+            y = attn.out_proj(v)
+            y = visual.ln_post(y[:, 1:]) @ visual.proj
+            y = y / y.norm(dim=-1, keepdim=True)
+        return y[0].reshape(int(grid[0]), int(grid[1]), -1)
+
+    def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        emb = self.patch_embeddings(frame)
+        text = self._text(tuple(p.phrase for p in prompts))
+        with self._torch.inference_mode():
+            logits = (emb @ text.T).permute(2, 0, 1) * CLIP_LOGIT_SCALE
+        frame = np.asarray(frame)
+        return _upsample(logits.float().cpu().numpy(), frame.shape[0], frame.shape[1])
+
+
 # --- The scorer ------------------------------------------------------------------------------------
 
 
@@ -422,7 +591,15 @@ def load_backend(model: str, device: str | None = None) -> ImageScorer:
         return TileBackend(spec, device)
     if family == "openclip":
         return OpenClipTileBackend(spec, device)
-    return Owlv2Backend(spec, device)
+    if family == "owlv2":
+        return Owlv2Backend(spec, device)
+    if family == "owlv2-density":
+        return Owlv2DensityBackend(spec, device)
+    if family == "siglip-patches":
+        return SiglipPatchBackend(spec, device)
+    if family == "openclip-patches":
+        return OpenClipPatchBackend(spec, device)
+    raise ValueError(f"model {model!r} has family {family!r}, which load_backend does not know")
 
 
 def load_scorer(

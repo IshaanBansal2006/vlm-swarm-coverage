@@ -161,7 +161,8 @@ def build_scene(cfg: RunConfig) -> Scene:
     if cfg.scene.kind == "random":
         assert cfg.scene.seed is not None
         scene = random_scene(cfg.scene.seed, cfg.scene.n_targets, cfg.scene.n_distractors,
-                             cfg.area.width, cfg.area.height, cfg.swarm.n_drones, cfg.swarm.altitude)
+                             cfg.area.width, cfg.area.height, cfg.swarm.n_drones, cfg.swarm.altitude,
+                             cfg.scene.target_mode)
     else:
         scene = default_scene(cfg.swarm.n_drones, cfg.swarm.altitude)
     if cfg.scene.floor is not None:

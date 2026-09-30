@@ -36,6 +36,15 @@ FEATURE_EXTENTS: dict[str, tuple[float, float, float]] = {
 
 TARGET_LABELS: frozenset[str] = frozenset({"damaged_road", "debris", "stalled_vehicle"})
 DISTRACTOR_LABELS: frozenset[str] = frozenset(FEATURE_EXTENTS) - TARGET_LABELS
+# A damaged road surface cannot lie off the road, so the off-road family draws from the rest.
+OFFROAD_TARGET_LABELS: frozenset[str] = frozenset({"debris", "stalled_vehicle"})
+TARGET_MODES: tuple[str, ...] = ("road", "offroad")
+# Off-road targets sit this far (centre, m) from the road's centre line, which keeps every target
+# cell more than 8 m (the analysis' `near` radius) from the road band |y - road| <= width/2 + 2.
+OFFROAD_MIN_OFFSET_M = 16.0
+OFFROAD_MAX_OFFSET_M = 20.0
+# Distractors in the off-road family stay on the verge and at least this far from every target.
+OFFROAD_DISTRACTOR_CLEARANCE_M = 10.0
 
 
 @dataclass(frozen=True)
@@ -191,6 +200,7 @@ def random_scene(
     height: float = 40.0,
     n_drones: int = 3,
     altitude: float = 12.0,
+    target_mode: str = "road",
 ) -> Scene:
     """A seeded layout for sweeps: targets on the road, distractors on the verges.
 
@@ -198,11 +208,22 @@ def random_scene(
     the middle 40 % of the height, so that no fixed position (the map's centre in particular) is
     a good place to be on every layout. Targets are spread along x so two never overlap;
     distractors are kept off the road so a distractor never sits on top of a target.
+
+    `target_mode="offroad"` keeps the road (the surface a model confuses with damage) but puts the
+    targets out in the fields, far from it, and keeps the distractors on the verge away from the
+    targets: the family where confusion lands away from what matters. Its draws are separate
+    code paths, so every `"road"` seed reproduces exactly the scene it always did.
     """
+    if target_mode not in TARGET_MODES:
+        raise ValueError(f"target_mode must be one of {TARGET_MODES}, got {target_mode!r}")
     rng = np.random.default_rng(seed)
     road = Road(y_center=float(height * rng.uniform(0.3, 0.7)), width=6.0)
-    features = list(_place_targets(rng, n_targets, width, road))
-    features += _place_distractors(rng, n_distractors, width, height, road)
+    if target_mode == "offroad":
+        targets = _place_targets_offroad(rng, n_targets, width, height, road)
+        features = targets + _place_distractors_away(rng, n_distractors, width, height, road, targets)
+    else:
+        features = list(_place_targets(rng, n_targets, width, road))
+        features += _place_distractors(rng, n_distractors, width, height, road)
     return Scene(
         width=width,
         height=height,
@@ -239,4 +260,52 @@ def _place_distractors(
         room = min(road.y_center, height - road.y_center) - 2.0
         y = road.y_center + side * rng.uniform(verge, max(verge + 0.5, min(room, verge + 10.0)))
         out.append(Feature(f"distractor_{i}", label, (x, float(y), 0.0), yaw=float(rng.uniform(-0.5, 0.5))))
+    return out
+
+
+def _place_targets_offroad(rng: np.random.Generator, n: int, width: float, height: float, road: Road) -> list[Feature]:
+    """Targets spread along x as on the road, but each on a side of the road with room for it,
+    OFFROAD_MIN..MAX_OFFSET_M from the centre line and 3 m clear of the area's edge."""
+    labels = sorted(OFFROAD_TARGET_LABELS)
+    margin, edge = 8.0, 3.0
+    xs = np.linspace(margin, width - margin, n) + rng.uniform(-2.0, 2.0, size=n)
+    room = {1.0: height - road.y_center - edge, -1.0: road.y_center - edge}
+    if max(room.values()) < OFFROAD_MIN_OFFSET_M:
+        raise ValueError(
+            f"a {height} m tall area with the road at y={road.y_center:.1f} has no side with "
+            f"{OFFROAD_MIN_OFFSET_M} m for an off-road target; use a taller area"
+        )
+    out = []
+    for i, x in enumerate(xs):
+        label = labels[rng.integers(len(labels))]
+        side = 1.0 if rng.random() < 0.5 else -1.0
+        if room[side] < OFFROAD_MIN_OFFSET_M:
+            side = -side
+        offset = rng.uniform(OFFROAD_MIN_OFFSET_M, max(OFFROAD_MIN_OFFSET_M, min(room[side], OFFROAD_MAX_OFFSET_M)))
+        y = road.y_center + side * offset
+        out.append(Feature(f"target_{i}", label, (float(x), float(y), 0.0), yaw=float(rng.uniform(-0.5, 0.5))))
+    return out
+
+
+def _place_distractors_away(
+    rng: np.random.Generator, n: int, width: float, height: float, road: Road, targets: list[Feature], tries: int = 200
+) -> list[Feature]:
+    """Distractors on the verge (5-9 m from the centre line), each at least
+    OFFROAD_DISTRACTOR_CLEARANCE_M from every target, so no confuser sits beside a target."""
+    labels = sorted(DISTRACTOR_LABELS)
+    verge = road.width / 2 + 2.0
+    txy = np.array([f.position[:2] for f in targets]).reshape(-1, 2)
+    out = []
+    for i in range(n):
+        label = labels[rng.integers(len(labels))]
+        for _ in range(tries):
+            x = float(rng.uniform(4.0, width - 4.0))
+            side = 1.0 if rng.random() < 0.5 else -1.0
+            y = float(road.y_center + side * rng.uniform(verge, verge + 4.0))
+            clear = len(txy) == 0 or float(np.min(np.linalg.norm(txy - [x, y], axis=1))) >= OFFROAD_DISTRACTOR_CLEARANCE_M
+            if clear and 2.0 <= y <= height - 2.0:
+                break
+        else:
+            raise ValueError(f"no verge position {OFFROAD_DISTRACTOR_CLEARANCE_M} m from every target after {tries} tries")
+        out.append(Feature(f"distractor_{i}", label, (x, y, 0.0), yaw=float(rng.uniform(-0.5, 0.5))))
     return out

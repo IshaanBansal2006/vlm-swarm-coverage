@@ -104,7 +104,8 @@ if args.config:
     cell_size = cfg["area"]["cell_size"]
     if cfg["scene"]["kind"] == "random":
         SCENE = scene_mod.random_scene(cfg["scene"]["seed"], cfg["scene"]["n_targets"], cfg["scene"]["n_distractors"],
-                                       cfg["area"]["width"], cfg["area"]["height"], n_drones, altitude)
+                                       cfg["area"]["width"], cfg["area"]["height"], n_drones, altitude,
+                                       cfg["scene"].get("target_mode", "road"))
     else:
         SCENE = scene_mod.default_scene(n_drones, altitude)
     if cfg["scene"].get("floor") is not None:

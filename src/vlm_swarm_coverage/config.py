@@ -206,12 +206,19 @@ class SceneConfig(_Strict):
     n_targets: int = Field(3, ge=1)
     n_distractors: int = Field(4, ge=0)
     floor: float | None = Field(None, ge=0, description="Override the mission's background importance per cell.")
+    target_mode: Literal["road", "offroad"] = Field("road", description="Targets on the road, or out in the fields (kind='random').")
 
     @model_validator(mode="after")
     def _random_needs_seed(self) -> SceneConfig:
         if self.kind == "random" and self.seed is None:
             raise ValueError("scene.kind='random' needs scene.seed so the layout is reproducible")
+        if self.kind != "random" and self.target_mode != "road":
+            raise ValueError("scene.target_mode only applies to kind='random'")
         return self
+
+    @model_serializer(mode="wrap")
+    def _serialise(self, handler: Any) -> dict[str, Any]:
+        return _omit_defaults(handler(self), {"target_mode": "road"})
 
 
 class RunConfig(_Strict):
