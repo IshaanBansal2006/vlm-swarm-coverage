@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 def _toml_loader():  # type: ignore[no-untyped-def]
@@ -42,6 +42,13 @@ class _Strict(BaseModel):
     survives the snapshot round trip instead of becoming `null`."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, ser_json_inf_nan="constants")
+
+
+def _omit_defaults(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    """Drop the listed keys while they hold their default. Fields added after runs were recorded
+    are serialised only when set, so every earlier config dumps, and hashes, exactly as before
+    (the sweep's resume identity is a hash of the dump)."""
+    return {k: v for k, v in data.items() if not (k in defaults and v == defaults[k])}
 
 
 class AreaConfig(_Strict):
@@ -99,6 +106,12 @@ class ScorerConfig(_Strict):
     contrast: bool = Field(True, description="Score phrases by softmax against background phrases (decision 016).")
     calibration: Path | None = Field(None, description="Affine score calibration JSON for kind='vlm'.")
     device: str | None = Field(None, description="torch device for kind='vlm'; default picks CUDA if present.")
+    strict_cache: bool = Field(
+        False,
+        description="kind='cached' only: a pose the cache lacks raises instead of being scored by the "
+                    "oracle. Off keeps every earlier run reproducible; every v2 spec turns it on, "
+                    "because the fallback silently hands the swarm the answer key.",
+    )
 
     @model_validator(mode="after")
     def _kind_has_what_it_needs(self) -> ScorerConfig:
@@ -107,6 +120,10 @@ class ScorerConfig(_Strict):
         if self.kind == "cached" and self.cache_path is None:
             raise ValueError("scorer.kind='cached' needs scorer.cache_path")
         return self
+
+    @model_serializer(mode="wrap")
+    def _serialise(self, handler: Any) -> dict[str, Any]:
+        return _omit_defaults(handler(self), {"strict_cache": False})
 
 
 class MessageConfig(_Strict):
@@ -135,9 +152,15 @@ class FusionConfig(_Strict):
 
 
 class ControllerConfig(_Strict):
-    kind: Literal["lloyd", "hold", "replay"] = "lloyd"
+    """`lloyd` descends the locational cost on the drone's own belief; `uniform` is the same on a
+    constant density (the no-perception floor); `lawnmower` sweeps a fixed strip per drone and
+    reads nothing; `ergodic` is spectral multiscale coverage on the drone's own belief
+    (Mathew & Mezic 2011); `hold` stays put; `replay` retraces a logged run."""
+
+    kind: Literal["lloyd", "hold", "replay", "uniform", "lawnmower", "ergodic"] = "lloyd"
     gain: float = Field(1.0, gt=0, description="Proportional gain toward the cell centroid.")
     replay_run: Path | None = Field(None, description="Run directory whose trajectory kind='replay' follows.")
+    ergodic_modes: int = Field(10, ge=2, description="kind='ergodic': cosine wavenumbers per axis (0..modes-1).")
 
     @model_validator(mode="after")
     def _replay_needs_a_run(self) -> ControllerConfig:
@@ -146,6 +169,10 @@ class ControllerConfig(_Strict):
         if self.kind != "replay" and self.replay_run is not None:
             raise ValueError("controller.replay_run only applies to kind='replay'")
         return self
+
+    @model_serializer(mode="wrap")
+    def _serialise(self, handler: Any) -> dict[str, Any]:
+        return _omit_defaults(handler(self), {"ergodic_modes": 10})
 
 
 class PriorConfig(_Strict):

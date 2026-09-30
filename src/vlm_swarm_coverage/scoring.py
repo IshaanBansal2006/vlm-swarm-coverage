@@ -139,14 +139,20 @@ class CachedScorer:
 
     The cache is keyed to one scorer (`model_id`), one grid and one altitude step, and refuses to
     load a file written for any other, so two scorers' caches can live side by side and a sweep
-    can be replayed against either without silently mixing them (decision 014)."""
+    can be replayed against either without silently mixing them (decision 014).
 
-    def __init__(self, inner: ImportanceScorer, grid: Grid, path: Path | None = None, altitude_step: float = 2.0, model_id: str = "oracle") -> None:
+    `strict=True` makes a miss an error. A cache replayed as a perception model must be complete:
+    the inner scorer on a replay is the oracle, so a lenient miss hands the swarm the answer key
+    for that pose and nothing records it."""
+
+    def __init__(self, inner: ImportanceScorer, grid: Grid, path: Path | None = None, altitude_step: float = 2.0,
+                 model_id: str = "oracle", strict: bool = False) -> None:
         self.inner = inner
         self.grid = grid
         self.path = path
         self.altitude_step = altitude_step
         self.model_id = model_id
+        self.strict = strict
         self._store: dict[str, tuple[NDArray[np.int64], NDArray[np.float64]]] = {}
         self.hits = 0
         self.misses = 0
@@ -165,6 +171,12 @@ class CachedScorer:
             cells, values = self._store[k]
             return Observation(view.drone_id, view.t, cells, values)
         self.misses += 1
+        if self.strict:
+            raise KeyError(
+                f"strict cache {self.path} ({self.model_id}) has no entry for pose bucket {k} "
+                f"(x={view.x:.2f}, y={view.y:.2f}, z={view.z:.2f}); re-score the cache for this pose, "
+                f"or set scorer.strict_cache=false to fall back to the wrapped scorer"
+            )
         obs = self.inner.score(view)
         self._store[k] = (obs.cells, obs.values)
         return obs

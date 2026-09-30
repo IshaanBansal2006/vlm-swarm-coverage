@@ -18,7 +18,13 @@ from vlm_swarm_coverage.artifacts import RunDir
 from vlm_swarm_coverage.channel import FaultedChannel
 from vlm_swarm_coverage.compress import build_encoder
 from vlm_swarm_coverage.consensus import AgeWeightedAverage, IgnoreMessages
-from vlm_swarm_coverage.control import HoldController, LloydController, ReplayController
+from vlm_swarm_coverage.control import (
+    ErgodicController,
+    HoldController,
+    LawnmowerController,
+    LloydController,
+    ReplayController,
+)
 from vlm_swarm_coverage.field import Grid, ImportanceField, rasterize_ground_truth
 from vlm_swarm_coverage.scene import default_scene, random_scene
 from vlm_swarm_coverage.schemas import PoseMessage, encode_ages
@@ -172,7 +178,13 @@ def build_scorer(cfg: RunConfig, grid: Grid, ground_truth: ImportanceField, scen
         return VLMScorer(cfg.scorer.model, grid, scene.mission, cfg.scorer.prompt_set,
                          cfg.scorer.calibration, cfg.scorer.device, cfg.scorer.contrast)
     if cfg.scorer.kind == "cached":
-        return CachedScorer(OracleScorer(ground_truth), grid, path=cfg.scorer.cache_path, model_id=cfg.scorer.model or "oracle")
+        if cfg.scorer.strict_cache and (cfg.scorer.cache_path is None or not cfg.scorer.cache_path.is_file()):
+            raise FileNotFoundError(
+                f"scorer.strict_cache is on but the cache {cfg.scorer.cache_path} does not exist; "
+                f"build it first (calibration cache ...) or fix scorer.cache_path"
+            )
+        return CachedScorer(OracleScorer(ground_truth), grid, path=cfg.scorer.cache_path,
+                            model_id=cfg.scorer.model or "oracle", strict=cfg.scorer.strict_cache)
     return OracleScorer(ground_truth)
 
 
@@ -194,7 +206,16 @@ def build_controller(cfg: RunConfig) -> CoverageController:
                 f"this config has dt={cfg.sim.dt}, n_drones={cfg.swarm.n_drones}. Replay needs both to match."
             )
         return ReplayController.from_run(source)
-    return LloydController(gain=cfg.controller.gain)
+    if cfg.controller.kind in ("lloyd", "uniform"):
+        return LloydController(gain=cfg.controller.gain, uniform=cfg.controller.kind == "uniform")
+    if cfg.controller.kind == "lawnmower":
+        sw = cfg.swarm
+        return LawnmowerController(cfg.area.width, cfg.area.height, sw.n_drones, sw.altitude,
+                                   sw.camera_fov_deg, sw.camera_aspect, sw.max_speed, cfg.sim.dt)
+    if cfg.controller.kind == "ergodic":
+        return ErgodicController((cfg.area.width, cfg.area.height), cfg.swarm.max_speed, cfg.sim.dt,
+                                 cfg.controller.ergodic_modes)
+    raise ValueError(f"controller.kind {cfg.controller.kind!r} has no builder; add a branch in build_controller")
 
 
 def jittered_starts(scene: Scene, cfg: RunConfig) -> tuple[tuple[float, float, float], ...]:
