@@ -88,6 +88,15 @@ def test_ergodic_controller_moves_at_full_speed() -> None:
     assert np.linalg.norm(u) == pytest.approx(3.0)
 
 
+def test_ergodic_drone_in_a_corner_is_not_stuck() -> None:
+    ctl = ErgodicController((60.0, 40.0), 3.0, 0.1)
+    for corner in ([0.0, 0.0], [60.0, 40.0], [0.0, 40.0]):
+        assert np.linalg.norm(ctl.command(0, np.array(corner), {}, two_gaussians())) == pytest.approx(3.0)
+    starts = np.array([[0.0, 0.0], [0.0, 40.0], [60.0, 0.0], [60.0, 40.0], [0.0, 20.0]])
+    traj = fly(ErgodicController((60.0, 40.0), 3.0, 0.1), two_gaussians(), starts, 600)
+    assert np.all(np.linalg.norm(traj[-1] - starts, axis=1) > 1.0)
+
+
 def test_uniform_lloyd_ignores_the_belief() -> None:
     pos = np.array([30.0, 20.0])
     peers = {1: np.array([10.0, 10.0])}

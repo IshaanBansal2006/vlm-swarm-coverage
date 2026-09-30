@@ -243,6 +243,8 @@ class ErgodicController:
     in the direction that most reduces the mismatch at the coarsest scales first.
     """
 
+    EDGE_M = 0.25
+
     def __init__(self, size: tuple[float, float], speed: float, dt: float, modes: int = 10) -> None:
         if speed <= 0 or dt <= 0:
             raise ValueError(f"ergodic control needs positive speed and dt, got {speed}, {dt}")
@@ -276,7 +278,11 @@ class ErgodicController:
         self._acc[drone_id] = visits if acc is None else acc + visits
         self._agent_time[drone_id] = self._agent_time.get(drone_id, 0.0) + len(pts) * self.dt
         s = self._acc[drone_id] - self._agent_time[drone_id] * self.target(belief)
-        b = (self.lam * s) @ self.gradient(np.asarray(position, dtype=np.float64))
+        # every basis function has zero normal derivative on the boundary, so a drone clamped
+        # onto an edge loses that component of B and one in a corner gets B = 0 and never moves
+        # again; the gradient is read a quarter metre inside the area instead
+        inside = np.clip(np.asarray(position, dtype=np.float64)[:2], self.EDGE_M, np.array(self.size) - self.EDGE_M)
+        b = (self.lam * s) @ self.gradient(inside)
         norm = float(np.linalg.norm(b))
         if norm <= 1e-12:
             return np.zeros(2)
