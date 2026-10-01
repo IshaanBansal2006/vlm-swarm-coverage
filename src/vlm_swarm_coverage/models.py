@@ -236,15 +236,20 @@ class ClipSegBackend(Backend):
         self.processor = CLIPSegProcessor.from_pretrained(hf_id)
         self.model = CLIPSegForImageSegmentation.from_pretrained(hf_id).to(self.device).eval()
         self._torch = torch
+        self._text_inputs: dict[tuple[str, ...], object] = {}
 
     def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
+        """The image is preprocessed once and repeated per phrase (the processor would resize and
+        normalise k identical copies on the CPU); the tokenised phrases are cached."""
         from PIL import Image
 
         image = Image.fromarray(np.asarray(frame))
-        texts = [p.phrase for p in prompts]
-        inputs = self.processor(text=texts, images=[image] * len(texts), padding=True, return_tensors="pt").to(self.device)
+        texts = tuple(p.phrase for p in prompts)
+        if texts not in self._text_inputs:
+            self._text_inputs[texts] = self.processor.tokenizer(list(texts), padding=True, return_tensors="pt").to(self.device)
+        pixels = self.processor.image_processor(images=[image], return_tensors="pt")["pixel_values"].to(self.device)
         with self._torch.inference_mode():
-            logits = self.model(**inputs).logits
+            logits = self.model(**self._text_inputs[texts], pixel_values=pixels.repeat(len(texts), 1, 1, 1)).logits
         return logits.float().cpu().numpy().reshape(len(texts), *logits.shape[-2:])
 
 
@@ -418,15 +423,17 @@ def gaussian_splat_max(boxes: NDArray[np.float64], scores: NDArray[np.float64], 
 
 class Owlv2DensityBackend(Owlv2Backend):
     """OWLv2 as a density rather than painted boxes: every predicted box above a low threshold
-    (default 0.01, so weak evidence is kept rather than cut to zero) is splatted as a
+    (default 0.01, so weak evidence is kept rather than cut to zero) and no larger than
+    `max_area_frac` of the frame is splatted as a
     score-weighted Gaussian (`gaussian_splat_max`), per phrase, on a map at `scale` of the frame's
     resolution. A pixel then takes the strongest weighted phrase, as `combine` does for the other
     models, without the background-phrase softmax a detector has no use for."""
 
     def __init__(self, hf_id: str = MODEL_IDS["owlv2"][1], device: str | None = None, threshold: float = 0.01,
-                 scale: float = 0.25) -> None:
+                 scale: float = 0.25, max_area_frac: float = 0.3) -> None:
         super().__init__(hf_id, device, threshold)
         self.scale = scale
+        self.max_area_frac = max_area_frac
 
     def target_density(self, frame: NDArray[np.uint8], targets: Sequence[Prompt]) -> NDArray[np.float64]:
         """(k_targets, h, w) Gaussian densities in [0, 1], one per target phrase."""
@@ -440,8 +447,14 @@ class Owlv2DensityBackend(Owlv2Backend):
         side = max(image.size)
         res = self.processor.post_process_grounded_object_detection(outputs, threshold=self.threshold, target_sizes=[(side, side)])[0]
         h, w = max(1, round(frame.shape[0] * self.scale)), max(1, round(frame.shape[1] * self.scale))
-        boxes = res["boxes"].float().cpu().numpy() * self.scale
+        boxes = res["boxes"].float().cpu().numpy()
         scores, labels = res["scores"].float().cpu().numpy(), res["labels"].cpu().numpy()
+        # boxes spanning most of the frame are OWLv2 describing the scene, not an object (the largest
+        # feature, a 6 m damaged road, fills ~17 % of a 12 m nadir frame); they would paint the whole
+        # map at the scene score
+        area = np.clip(boxes[:, 2] - boxes[:, 0], 0, None) * np.clip(boxes[:, 3] - boxes[:, 1], 0, None)
+        keep = area <= self.max_area_frac * frame.shape[0] * frame.shape[1]
+        boxes, scores, labels = boxes[keep] * self.scale, scores[keep], labels[keep]
         return np.stack([gaussian_splat_max(boxes[labels == k], scores[labels == k], h, w) for k in range(len(targets))])
 
     def phrase_logits(self, frame: NDArray[np.uint8], prompts: Sequence[Prompt]) -> NDArray[np.float64]:
@@ -453,11 +466,13 @@ class Owlv2DensityBackend(Owlv2Backend):
         return np.log(np.clip(out, eps, 1 - eps) / (1 - np.clip(out, eps, 1 - eps)))
 
 
-def _upsample(maps: NDArray[np.float64], height: int, width: int) -> NDArray[np.float64]:
+def _upsample(maps, height: int, width: int) -> NDArray[np.float64]:  # type: ignore[no-untyped-def]
+    """(k, h, w) logits, a tensor on any device or an array -> (k, height, width), bilinear."""
     import torch
 
-    t = torch.as_tensor(np.asarray(maps, dtype=np.float32))[None]
-    return torch.nn.functional.interpolate(t, size=(height, width), mode="bilinear", align_corners=False)[0].numpy().astype(np.float64)
+    t = maps if isinstance(maps, torch.Tensor) else torch.as_tensor(np.asarray(maps, dtype=np.float32))
+    out = torch.nn.functional.interpolate(t.float()[None], size=(height, width), mode="bilinear", align_corners=False)[0]
+    return out.cpu().numpy().astype(np.float64)
 
 
 class SiglipPatchBackend(TileBackend):
@@ -500,7 +515,7 @@ class SiglipPatchBackend(TileBackend):
             cos = (emb @ text.T).permute(2, 0, 1)
             logits = cos * self.model.logit_scale.exp() + self.model.logit_bias
         frame = np.asarray(frame)
-        return _upsample(logits.float().cpu().numpy(), frame.shape[0], frame.shape[1])
+        return _upsample(logits, frame.shape[0], frame.shape[1])
 
 
 class OpenClipPatchBackend(OpenClipTileBackend):
@@ -554,7 +569,7 @@ class OpenClipPatchBackend(OpenClipTileBackend):
         with self._torch.inference_mode():
             logits = (emb @ text.T).permute(2, 0, 1) * CLIP_LOGIT_SCALE
         frame = np.asarray(frame)
-        return _upsample(logits.float().cpu().numpy(), frame.shape[0], frame.shape[1])
+        return _upsample(logits, frame.shape[0], frame.shape[1])
 
 
 # --- The scorer ------------------------------------------------------------------------------------
